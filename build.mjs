@@ -18,6 +18,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyser } from './seuils.mjs';
+import { recuperer as recupererVigilance, inconnu as vigilanceInconnue } from './vigilance.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const SORTIE = join(ICI, 'paquets');
@@ -213,12 +214,25 @@ async function principal() {
 
     if (VERIF || spots.length === 0) continue;
 
+    // La vigilance officielle. En cas de doute, elle vaut « inconnu » —
+    // jamais « vert ». Voir l'en-tête de vigilance.mjs.
+    let vigilance;
+    try {
+      vigilance = DEMO
+        ? vigilanceInconnue('mode démo')
+        : await recupererVigilance(ile);
+    } catch (e) {
+      vigilance = vigilanceInconnue(String((e && e.message) || e));
+    }
+    log(`  vigilance ${ile.nom} : ${vigilance.etat}${vigilance.raison ? ' (' + vigilance.raison + ')' : ''}`);
+
     const expire = spots[0]?.heures?.slice(-1)[0]?.t || null;
     const paquet = {
-      version: 1, genere, expire,
+      version: 2, genere, expire,
       ile: ile.id, nom: ile.nom, archipel: ile.archipel, arome: ile.arome,
       source: 'Open-Meteo — modèles ECMWF IFS et MFWAM (Météo-France)',
       avertissement: 'Prévision indicative. Ne remplace pas les bulletins de Météo-France Polynésie ni une carte marine officielle.',
+      vigilance,
       spots
     };
 
