@@ -1,0 +1,98 @@
+{
+  "commentaire": "Le registre des lieux. Ajouter un spot = ajouter une entrée ici, rien d'autre à toucher. 'type' vaut lagon, passe ou large — c'est lui qui choisit les seuils. Les coordonnées doivent tomber sur de l'eau libre : si la maille marine tombe sur de la terre, l'API ne renvoie pas de houle.",
+  "iles": [
+    {
+      "id": "bora-bora",
+      "nom": "Bora Bora",
+      "archipel": "Îles Sous-le-Vent",
+      "arome": true,
+      "spots": [
+        { "id": "teavanui",  "nom": "Passe Teavanui",  "type": "passe", "lat": -16.50, "lon": -151.79 },
+        { "id": "povai",     "nom": "Baie de Povai",   "type": "lagon", "lat": -16.52, "lon": -151.75 },
+        { "id": "tapu",      "nom": "Tombant de Tapu", "type": "large", "lat": -16.50, "lon": -151.82 },
+        { "id": "dcp-nord",  "nom": "DCP Nord",        "type": "large", "lat": -16.33, "lon": -151.75 }
+      ]
+    },
+    {
+      "id": "tahiti",
+      "nom": "Tahiti",
+      "archipel": "Îles du Vent",
+      "arome": true,
+      "spots": [
+        { "id": "papeete",   "nom": "Passe de Papeete", "type": "passe", "lat": -17.50, "lon": -149.57 },
+        { "id": "phaeton",   "nom": "Baie de Phaéton",  "type": "lagon", "lat": -17.74, "lon": -149.31 },
+        { "id": "large-nord","nom": "Au large, nord",   "type": "large", "lat": -17.40, "lon": -149.50 }
+      ]
+    },
+    {
+      "id": "moorea",
+      "nom": "Moorea",
+      "archipel": "Îles du Vent",
+      "arome": true,
+      "spots": [
+        { "id": "opunohu",   "nom": "Passe d'Opunohu",  "type": "passe", "lat": -17.45, "lon": -149.86 },
+        { "id": "lagon-nord","nom": "Lagon nord",       "type": "lagon", "lat": -17.47, "lon": -149.84 }
+      ]
+    },
+    {
+      "id": "raiatea",
+      "nom": "Raiatea",
+      "archipel": "Îles Sous-le-Vent",
+      "arome": true,
+      "spots": [
+        { "id": "teavapiti", "nom": "Passe Teavapiti",  "type": "passe", "lat": -16.72, "lon": -151.42 },
+        { "id": "faaroa",    "nom": "Baie de Faaroa",   "type": "lagon", "lat": -16.81, "lon": -151.39 }
+      ]
+    },
+    {
+      "id": "rangiroa",
+      "nom": "Rangiroa",
+      "archipel": "Tuamotu",
+      "arome": true,
+      "spots": [
+        { "id": "tiputa",    "nom": "Passe de Tiputa",  "type": "passe", "lat": -14.93, "lon": -147.62 },
+        { "id": "avatoru",   "nom": "Passe d'Avatoru",  "type": "passe", "lat": -14.93, "lon": -147.72 },
+        { "id": "lagon",     "nom": "Lagon",            "type": "lagon", "lat": -15.05, "lon": -147.70 }
+      ]
+    },
+    {
+      "id": "fakarava",
+      "nom": "Fakarava",
+      "archipel": "Tuamotu",
+      "arome": true,
+      "spots": [
+        { "id": "garuae",    "nom": "Passe Garuae",     "type": "passe", "lat": -16.05, "lon": -145.62 },
+        { "id": "tumakohua", "nom": "Passe Tumakohua",  "type": "passe", "lat": -16.51, "lon": -145.46 }
+      ]
+    },
+    {
+      "id": "nuku-hiva",
+      "nom": "Nuku Hiva",
+      "archipel": "Marquises",
+      "arome": false,
+      "spots": [
+        { "id": "taiohae",   "nom": "Baie de Taiohae",  "type": "lagon", "lat": -8.93,  "lon": -140.10 },
+        { "id": "large-sud", "nom": "Au large, sud",    "type": "large", "lat": -8.99,  "lon": -140.10 }
+      ]
+    },
+    {
+      "id": "tubuai",
+      "nom": "Tubuai",
+      "archipel": "Australes",
+      "arome": false,
+      "spots": [
+        { "id": "passe-nord","nom": "Passe nord",       "type": "passe", "lat": -23.30, "lon": -149.50 }
+      ]
+    },
+    {
+      "id": "gambier",
+      "nom": "Gambier",
+      "archipel": "Gambier",
+      "arome": false,
+      "spots": [
+        { "id": "rikitea",   "nom": "Rikitea",          "type": "lagon", "lat": -23.12, "lon": -134.97 },
+        { "id": "large",     "nom": "Au large",         "type": "large", "lat": -23.05, "lon": -134.80 }
+      ]
+    }
+  ]
+}
