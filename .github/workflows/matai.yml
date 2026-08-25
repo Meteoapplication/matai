@@ -1,12 +1,9 @@
 name: Prévisions Mata'i
 
-# Les heures sont en UTC. Tahiti est à UTC-10.
-#   16:00 UTC = 06:00 à Tahiti
-#   04:00 UTC = 18:00 à Tahiti
+# Toutes les heures, à l'heure ronde. Coût nul sur un dépôt public.
 on:
   schedule:
-    - cron: '0 16 * * *'
-    - cron: '0 4 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -25,6 +22,7 @@ jobs:
       - name: Fabriquer les paquets
         env:
           OPEN_METEO_CLE: ${{ secrets.OPEN_METEO_CLE }}
+          METEOFRANCE_CLE: ${{ secrets.METEOFRANCE_CLE }}
         run: node build.mjs
 
       - name: Publier les paquets
@@ -33,4 +31,5 @@ jobs:
           git config user.email "matai@users.noreply.github.com"
           git add paquets/
           git diff --staged --quiet || git commit -m "Prévisions du $(date -u '+%d/%m/%Y %H:%M') UTC"
+          git pull --rebase --autostash origin main
           git push
