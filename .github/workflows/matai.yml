@@ -1,0 +1,36 @@
+name: Prévisions Mata'i
+
+# Les heures sont en UTC. Tahiti est à UTC-10.
+#   16:00 UTC = 06:00 à Tahiti
+#   04:00 UTC = 18:00 à Tahiti
+on:
+  schedule:
+    - cron: '0 16 * * *'
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  previsions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fabriquer les paquets
+        env:
+          OPEN_METEO_CLE: ${{ secrets.OPEN_METEO_CLE }}
+        run: node build.mjs
+
+      - name: Publier les paquets
+        run: |
+          git config user.name  "Mata'i"
+          git config user.email "matai@users.noreply.github.com"
+          git add paquets/
+          git diff --staged --quiet || git commit -m "Prévisions du $(date -u '+%d/%m/%Y %H:%M') UTC"
+          git push
