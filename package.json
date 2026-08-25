@@ -1,0 +1,16 @@
+{
+  "name": "matai-backend",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fabrique les paquets de prévision Mata'i",
+  "scripts": {
+    "build": "node build.mjs",
+    "demo": "node build.mjs --demo",
+    "verif": "node build.mjs --verif",
+    "nuages": "node nuages.mjs --test"
+  },
+  "dependencies": {
+    "sharp": "^0.34.0"
+  }
+}

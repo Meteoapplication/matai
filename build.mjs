@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyser } from './seuils.mjs';
 import { recuperer as recupererVigilance, inconnu as vigilanceInconnue } from './vigilance.mjs';
+import { produire as produireNuages } from './nuages.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const SORTIE = join(ICI, 'paquets');
@@ -182,6 +183,18 @@ async function principal() {
 
   log(DEMO ? '— mode démo, aucune requête réseau —' : `— interrogation de ${HOTE_METEO} —`);
 
+  // Les nuages : un seul téléchargement du disque satellite pour toutes les
+  // îles, découpé ensuite. C'est un plus — jamais une raison de faire
+  // échouer la publication des prévisions.
+  let nuages = {};
+  if (!DEMO && !VERIF) {
+    try {
+      nuages = await produireNuages(registre.iles, SORTIE);
+    } catch (e) {
+      log(`  nuages : étape abandonnée — ${(e && e.message) || e}`);
+    }
+  }
+
   let total = 0, sansHoule = 0, echecs = 0;
   const resume = [];
 
@@ -233,6 +246,7 @@ async function principal() {
       source: 'Open-Meteo — modèles ECMWF IFS et MFWAM (Météo-France)',
       avertissement: 'Prévision indicative. Ne remplace pas les bulletins de Météo-France Polynésie ni une carte marine officielle.',
       vigilance,
+      nuages: nuages[ile.id] || null,
       spots
     };
 
@@ -244,12 +258,20 @@ async function principal() {
   }
 
   if (!VERIF) {
+    // Le manifeste porte désormais un point représentatif par île — le
+    // centre de ses spots. C'est ce qui permet à l'app de savoir sur quelle
+    // île se trouve l'utilisateur sans rien télécharger d'autre.
     const manifeste = {
-      version: 1, genere,
-      iles: registre.iles.map((i) => ({
-        id: i.id, nom: i.nom, archipel: i.archipel,
-        arome: i.arome, fichier: `${i.id}.json`
-      }))
+      version: 2, genere,
+      iles: registre.iles.map((i) => {
+        const n = i.spots.length || 1;
+        return {
+          id: i.id, nom: i.nom, archipel: i.archipel,
+          arome: i.arome, fichier: `${i.id}.json`,
+          lat: arrondir(i.spots.reduce((s, x) => s + x.lat, 0) / n, 3),
+          lon: arrondir(i.spots.reduce((s, x) => s + x.lon, 0) / n, 3)
+        };
+      })
     };
     await writeFile(join(SORTIE, 'manifeste.json'), JSON.stringify(manifeste), 'utf8');
     log('  → paquets/manifeste.json');
