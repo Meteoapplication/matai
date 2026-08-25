@@ -19,6 +19,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Installer les dépendances
+        run: npm install --no-audit --no-fund
+
       - name: Fabriquer les paquets
         env:
           OPEN_METEO_CLE: ${{ secrets.OPEN_METEO_CLE }}
