@@ -83,7 +83,11 @@ async function recuperer(url, essais = 3) {
  * pas parce qu'on voulait afficher l'indice UV.
  */
 const CHAMPS_INDISPENSABLES = ['wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
-const CHAMPS_BONUS = ['precipitation', 'uv_index'];
+// uv_index tient compte des nuages ; uv_index_clear_sky donne ce que le
+// même ciel donnerait dégagé. L'écart entre les deux est l'information la
+// plus utile de la journée : « 3 maintenant, 8 dès que ça s'ouvre » est ce
+// qui brûle les gens qui ont jugé sur le gris du matin.
+const CHAMPS_BONUS = ['precipitation', 'uv_index', 'uv_index_clear_sky'];
 
 function urlMeteo(s, champs) {
   const p = new URLSearchParams({
@@ -136,15 +140,14 @@ function urlMarine(s) {
 function fausseReponse(s) {
   const t0 = new Date();
   t0.setMinutes(0, 0, 0);
-  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [], uv = [];
+  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [], uv = [], uvClair = [];
   for (let i = 0; i < HEURES + 12; i++) {
     const d = new Date(t0.getTime() + i * 3600000);
     temps.push(d.toISOString().slice(0, 16));
     const cycle = Math.sin((i / 24) * Math.PI * 2);
 
     // UV factice mais de forme juste : nul la nuit, cloche autour du midi
-    // solaire, crête vers 13 — ce qui est la réalité d'ici, pas une
-    // exagération. Sert à voir la mise en page dans le bon ordre de grandeur.
+    // solaire. Sert à voir la mise en page dans le bon ordre de grandeur.
     // L'heure du paquet, pas celle du fuseau : en mode démo l'horodatage
     // écrit dans `temps` fait office d'heure locale, comme le renvoie
     // l'API réelle avec timezone=Pacific/Tahiti.
@@ -154,7 +157,13 @@ function fausseReponse(s) {
     // relisant — une donnée de test à la mauvaise forme cache exactement
     // le genre de bug d'affichage qu'elle devrait révéler.
     const arche = Math.cos(((hLoc - 12.5) / 24) * Math.PI * 2);
-    uv.push(arrondir(Math.max(0, 13 * (arche > 0 ? arche : 0)), 1));
+    // Ciel clair : la cloche pleine. Réel : la même, rabotée par les
+    // nuages. La pointe de 8 est celle mesurée fin août à Bora Bora, pas
+    // un chiffre d'été austral — une donnée de test à la mauvaise saison
+    // fait valider des affichages qu'on ne verra jamais.
+    const clair = Math.max(0, 8 * (arche > 0 ? arche : 0));
+    uvClair.push(arrondir(clair, 1));
+    uv.push(arrondir(clair * (i % 7 === 0 ? 0.35 : 0.9), 1));
     vent.push(arrondir(16 + cycle * 7 + (s.lat % 1) * 3, 1));
     raf.push(arrondir(22 + cycle * 9, 1));
     dir.push(135);
@@ -165,7 +174,7 @@ function fausseReponse(s) {
     pluie.push(i % 9 === 0 ? 2.4 : 0);
   }
   return {
-    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie, uv_index: uv } },
+    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie, uv_index: uv, uv_index_clear_sky: uvClair } },
     marine: { hourly: { time: temps, wave_height: houle, wave_period: per, wave_direction: hdir, swell_wave_height: swell } }
   };
 }
@@ -219,6 +228,7 @@ async function traiterSpot(spot) {
       // L'application se tait alors, elle n'affiche pas « 0 » : un zéro
       // d'index UV à midi serait un mensonge dangereux.
       uv:      arrondir(meteo.hourly.uv_index?.[i], 1),
+      uvClair: arrondir(meteo.hourly.uv_index_clear_sky?.[i], 1),
       houle:   k === undefined ? null : arrondir(M.wave_height?.[k], 2),
       periode: k === undefined ? null : arrondir(M.wave_period?.[k], 1),
       houleDir:k === undefined ? null : arrondir(M.wave_direction?.[k], 0),
