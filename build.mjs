@@ -87,7 +87,12 @@ const CHAMPS_INDISPENSABLES = ['wind_speed_10m', 'wind_direction_10m', 'wind_gus
 // même ciel donnerait dégagé. L'écart entre les deux est l'information la
 // plus utile de la journée : « 3 maintenant, 8 dès que ça s'ouvre » est ce
 // qui brûle les gens qui ont jugé sur le gris du matin.
-const CHAMPS_BONUS = ['precipitation', 'uv_index', 'uv_index_clear_sky'];
+// temperature_2m et weather_code servent l'écran d'accueil : la
+// température qu'il fait, et le pictogramme du ciel. Ce sont les deux
+// premières choses que cherche quelqu'un qui ouvre une app météo, et
+// elles n'étaient nulle part dans les paquets.
+const CHAMPS_BONUS = ['precipitation', 'uv_index', 'uv_index_clear_sky',
+                      'temperature_2m', 'weather_code'];
 
 function urlMeteo(s, champs) {
   const p = new URLSearchParams({
@@ -140,7 +145,7 @@ function urlMarine(s) {
 function fausseReponse(s) {
   const t0 = new Date();
   t0.setMinutes(0, 0, 0);
-  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [], uv = [], uvClair = [];
+  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [], uv = [], uvClair = [], temp = [], ciel = [];
   for (let i = 0; i < HEURES + 12; i++) {
     const d = new Date(t0.getTime() + i * 3600000);
     temps.push(d.toISOString().slice(0, 16));
@@ -172,9 +177,12 @@ function fausseReponse(s) {
     hdir.push(200);
     swell.push(arrondir(1.3 + cycle * 0.7, 2));
     pluie.push(i % 9 === 0 ? 2.4 : 0);
+    // Température : cloche du jour autour de 27 °C, nuit vers 24 °C.
+    temp.push(arrondir(25.5 + 2 * Math.cos(((hLoc - 14) / 24) * Math.PI * 2), 1));
+    ciel.push([0, 1, 2, 3, 80, 61, 95][i % 7]);
   }
   return {
-    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie, uv_index: uv, uv_index_clear_sky: uvClair } },
+    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie, uv_index: uv, uv_index_clear_sky: uvClair, temperature_2m: temp, weather_code: ciel } },
     marine: { hourly: { time: temps, wave_height: houle, wave_period: per, wave_direction: hdir, swell_wave_height: swell } }
   };
 }
@@ -229,6 +237,10 @@ async function traiterSpot(spot) {
       // d'index UV à midi serait un mensonge dangereux.
       uv:      arrondir(meteo.hourly.uv_index?.[i], 1),
       uvClair: arrondir(meteo.hourly.uv_index_clear_sky?.[i], 1),
+      temp:    arrondir(meteo.hourly.temperature_2m?.[i], 1),
+      // Code OMM du temps sensible : 0 = ciel clair, 61 = pluie, 95 = orage…
+      // On publie le nombre brut, l'application le met en mots et en image.
+      ciel:    meteo.hourly.weather_code?.[i] ?? null,
       houle:   k === undefined ? null : arrondir(M.wave_height?.[k], 2),
       periode: k === undefined ? null : arrondir(M.wave_period?.[k], 1),
       houleDir:k === undefined ? null : arrondir(M.wave_direction?.[k], 0),
