@@ -41,8 +41,20 @@ const ICI = dirname(fileURLToPath(import.meta.url));
  * 5424 pixels = résolution native de 2 km. C'est le minimum pour qu'une
  * fenêtre de quelques degrés autour d'une île reste exploitable.
  */
-export const SOURCE =
-  'https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR/5424x5424.jpg';
+export const DOSSIER_GOES =
+  'https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR';
+
+/** La dernière image publiée, sans avoir à connaître son heure. */
+export const SOURCE = `${DOSSIER_GOES}/5424x5424.jpg`;
+
+/**
+ * L'image d'un instant précis. L'horodatage NOAA s'écrit AAAAJJJHHMM, où
+ * JJJ est le quantième de l'année — pas le mois et le jour. C'est ce qui
+ * permet de remonter le temps et de fabriquer une animation.
+ */
+export function urlDatee(horodatage, taille = 5424) {
+  return `${DOSSIER_GOES}/${horodatage}_GOES18-ABI-FD-GEOCOLOR-${taille}x${taille}.jpg`;
+}
 
 /** Largeur de la fenêtre découpée, en degrés. */
 const FENETRE = 7;
@@ -139,7 +151,7 @@ export function empriseRegion(taille) {
   };
 }
 
-async function telecharger(url) {
+export async function telecharger(url) {
   const r = await fetch(url, { signal: AbortSignal.timeout(120000) });
   if (!r.ok) throw new Error(`HTTP ${r.status} sur ${url}`);
   return Buffer.from(await r.arrayBuffer());
@@ -174,12 +186,17 @@ export async function decouper(sharp, imageEntiere, lat, lon, taille, cote = 520
  * n'importe quel point du globe dans l'image côté application : sans
  * l'origine et la taille du disque, les repères seraient décoratifs.
  */
-export async function decouperRegion(sharp, entiere, taille, sortie, horodatage) {
+export async function recadrerRegion(sharp, entiere, taille, qualite = 76) {
   const e = empriseRegion(taille);
   const image = await sharp(entiere)
     .extract({ left: e.gauche, top: e.haut, width: e.largeur, height: e.hauteur })
-    .jpeg({ quality: 76, progressive: true })
+    .jpeg({ quality: qualite, progressive: true })
     .toBuffer();
+  return { image, emprise: e };
+}
+
+export async function decouperRegion(sharp, entiere, taille, sortie, horodatage) {
+  const { image, emprise: e } = await recadrerRegion(sharp, entiere, taille);
 
   await writeFile(join(sortie, 'nuages', 'polynesie.jpg'), image);
 
