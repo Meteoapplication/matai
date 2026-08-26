@@ -21,9 +21,28 @@ name: Prévisions Mata'i
 # GitHub n'est pas ponctuel à la minute : un passage peut décaler de dix à
 # vingt minutes quand leurs serveurs sont chargés. L'app affiche l'âge réel
 # de chaque image, jamais une fraîcheur supposée.
+#
+# ─────────────────────────────────────────────────────────────────────
+# POURQUOI TROIS HORAIRES ET PAS « TOUTES LES 20 MINUTES »
+#
+# La première version disait `*/20 * * * *`. Résultat mesuré : zéro
+# déclenchement automatique en une heure vingt, alors que la version
+# précédente en `0 * * * *` en avait enchaîné dix sans en rater un.
+#
+# GitHub le documente à demi-mot : le planificateur est « au mieux », et
+# il traite les cadences rapprochées en dernier — quand la charge monte,
+# ce sont elles qu'il sacrifie.
+#
+# On demande donc trois horaires HORAIRES décalés. Chacun est une cadence
+# lente, que GitHub honore ; ensemble ils donnent un passage toutes les
+# vingt minutes. Et on évite la minute 0, qui est l'heure de pointe de
+# toute la planète.
+# ─────────────────────────────────────────────────────────────────────
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '5 * * * *'
+    - cron: '25 * * * *'
+    - cron: '45 * * * *'
   workflow_dispatch:
 
 permissions:
