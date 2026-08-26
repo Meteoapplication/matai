@@ -69,14 +69,57 @@ async function recuperer(url, essais = 3) {
 
 // ---------------------------------------------------------------- réseau
 
-function urlMeteo(s) {
+/**
+ * Les champs horaires demandés à Open-Meteo.
+ *
+ * INDISPENSABLE : sans le vent, il n'y a pas de bulletin du tout.
+ * BONUS : agréable à avoir, mais jamais au prix du reste.
+ *
+ * Ce partage n'est pas de la cosmétique. Une API change ses noms de champs
+ * sans prévenir, et un champ inconnu fait échouer la requête ENTIÈRE : en
+ * ajoutant `uv_index` sans filet, on prenait le risque qu'un renommage
+ * chez eux fasse tomber les vingt-et-un points de mesure d'un coup, un
+ * matin, sans que personne l'ait touché. Le bulletin de sécurité ne tombe
+ * pas parce qu'on voulait afficher l'indice UV.
+ */
+const CHAMPS_INDISPENSABLES = ['wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
+const CHAMPS_BONUS = ['precipitation', 'uv_index'];
+
+function urlMeteo(s, champs) {
   const p = new URLSearchParams({
     latitude: s.lat, longitude: s.lon,
-    hourly: 'wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation',
+    hourly: champs.join(','),
     wind_speed_unit: 'kn', timezone: FUSEAU, forecast_days: '3'
   });
   if (CLE) p.set('apikey', CLE);
   return `https://${HOTE_METEO}/v1/forecast?${p}`;
+}
+
+/**
+ * Demande tout ; si ça échoue, redemande le strict nécessaire.
+ * Les champs bonus manquants deviennent alors null, et l'application se
+ * tait sur ces lignes-là — elle n'invente rien.
+ */
+let bonusAbandonnes = false;
+
+async function recupererMeteo(s) {
+  if (!bonusAbandonnes) {
+    try {
+      // UNE SEULE tentative pour la requête complète. Si le champ n'existe
+      // plus, réessayer trois fois ne le fera pas réapparaître : ça ne fait
+      // que tripler la charge sur une API dont on est l'invité.
+      return await recuperer(urlMeteo(s, [...CHAMPS_INDISPENSABLES, ...CHAMPS_BONUS]), 1);
+    } catch (e) {
+      // Et on ne redemande pas pour les vingt spots suivants : le refus
+      // porte sur le champ, pas sur le lieu. Sans ce drapeau, un renommage
+      // chez Open-Meteo nous faisait envoyer soixante-trois requêtes vouées
+      // à l'échec à chaque exécution horaire — mesuré, pas supposé.
+      bonusAbandonnes = true;
+      log(`  ! champs optionnels refusés (${e.message || e})`);
+      log('    → repli sur le vent seul pour tous les points ; pluie et UV seront absents');
+    }
+  }
+  return recuperer(urlMeteo(s, CHAMPS_INDISPENSABLES));
 }
 
 function urlMarine(s) {
@@ -93,11 +136,25 @@ function urlMarine(s) {
 function fausseReponse(s) {
   const t0 = new Date();
   t0.setMinutes(0, 0, 0);
-  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [];
+  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [], uv = [];
   for (let i = 0; i < HEURES + 12; i++) {
     const d = new Date(t0.getTime() + i * 3600000);
     temps.push(d.toISOString().slice(0, 16));
     const cycle = Math.sin((i / 24) * Math.PI * 2);
+
+    // UV factice mais de forme juste : nul la nuit, cloche autour du midi
+    // solaire, crête vers 13 — ce qui est la réalité d'ici, pas une
+    // exagération. Sert à voir la mise en page dans le bon ordre de grandeur.
+    // L'heure du paquet, pas celle du fuseau : en mode démo l'horodatage
+    // écrit dans `temps` fait office d'heure locale, comme le renvoie
+    // l'API réelle avec timezone=Pacific/Tahiti.
+    const hLoc = d.getUTCHours();
+    // Période 24 h, pas 12 : posée à 12, la courbe repartait à midi et
+    // culminait à minuit. Repéré en imprimant la courbe plutôt qu'en la
+    // relisant — une donnée de test à la mauvaise forme cache exactement
+    // le genre de bug d'affichage qu'elle devrait révéler.
+    const arche = Math.cos(((hLoc - 12.5) / 24) * Math.PI * 2);
+    uv.push(arrondir(Math.max(0, 13 * (arche > 0 ? arche : 0)), 1));
     vent.push(arrondir(16 + cycle * 7 + (s.lat % 1) * 3, 1));
     raf.push(arrondir(22 + cycle * 9, 1));
     dir.push(135);
@@ -108,7 +165,7 @@ function fausseReponse(s) {
     pluie.push(i % 9 === 0 ? 2.4 : 0);
   }
   return {
-    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie } },
+    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie, uv_index: uv } },
     marine: { hourly: { time: temps, wave_height: houle, wave_period: per, wave_direction: hdir, swell_wave_height: swell } }
   };
 }
@@ -122,7 +179,7 @@ async function traiterSpot(spot) {
     ({ meteo, marine } = fausseReponse(spot));
   } else {
     [meteo, marine] = await Promise.all([
-      recuperer(urlMeteo(spot)),
+      recupererMeteo(spot),
       recuperer(urlMarine(spot)).catch((e) => ({ __erreur: String(e.message || e) }))
     ]);
   }
@@ -158,6 +215,10 @@ async function traiterSpot(spot) {
       // elle ne change rien ; pour un touriste qui choisit sa journée et
       // pour un prestataire de plein air, c'est la première question.
       pluie:   arrondir(meteo.hourly.precipitation?.[i], 1),
+      // Si le champ manque — modèle sans UV, API changée — on publie null.
+      // L'application se tait alors, elle n'affiche pas « 0 » : un zéro
+      // d'index UV à midi serait un mensonge dangereux.
+      uv:      arrondir(meteo.hourly.uv_index?.[i], 1),
       houle:   k === undefined ? null : arrondir(M.wave_height?.[k], 2),
       periode: k === undefined ? null : arrondir(M.wave_period?.[k], 1),
       houleDir:k === undefined ? null : arrondir(M.wave_direction?.[k], 0),
