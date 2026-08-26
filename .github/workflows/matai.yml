@@ -1,13 +1,39 @@
 name: Prévisions Mata'i
 
-# Toutes les heures, à l'heure ronde. Coût nul sur un dépôt public.
+# ═══════════════════════════════════════════════════════════════════════
+# DEUX RYTHMES DANS UN SEUL FLUX
+#
+# Les prévisions et les nuages n'ont pas la même durée de vie.
+#
+#   Les prévisions viennent de modèles qui ne sortent que deux à quatre
+#   fois par jour. Les recalculer sans arrêt ne les rendrait pas plus
+#   justes — ça brûlerait du quota pour rien. Une fois par heure suffit.
+#
+#   Les nuages, eux, sont une photo. GOES-18 en prend une toutes les dix
+#   minutes. Une photo d'il y a une heure ne sert à rien à quelqu'un qui
+#   décide s'il sort maintenant.
+#
+# Donc : le flux passe toutes les vingt minutes. Au premier passage de
+# l'heure il refait tout ; aux deux autres il ne va chercher que les
+# images du satellite. Un déclenchement manuel refait toujours tout.
+# ═══════════════════════════════════════════════════════════════════════
+#
+# GitHub n'est pas ponctuel à la minute : un passage peut décaler de dix à
+# vingt minutes quand leurs serveurs sont chargés. L'app affiche l'âge réel
+# de chaque image, jamais une fraîcheur supposée.
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '*/20 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Deux passages qui se chevauchent se marcheraient sur les pieds au moment
+# de publier. On les met à la queue leu leu.
+concurrency:
+  group: publication-matai
+  cancel-in-progress: false
 
 jobs:
   previsions:
@@ -17,22 +43,61 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Installer les dépendances
         run: npm install --no-audit --no-fund
 
-      - name: Fabriquer les paquets
+      # ─────────────────────────────────────────────────────────────────
+      # On récupère ce qui est déjà en ligne AVANT de fabriquer.
+      #
+      # Sans ça, chaque passage repartirait de zéro et retéléchargerait
+      # les douze images de la boucle — deux cent quarante mégaoctets pour
+      # rien. Là, on ne va chercher que les deux qui manquent.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Récupérer ce qui est déjà publié
+        run: |
+          rm -rf paquets
+          if git fetch --depth=1 origin site; then
+            git checkout FETCH_HEAD -- paquets || echo "branche site encore vide"
+            git reset --quiet
+          else
+            echo "première publication : rien à récupérer"
+          fi
+          echo "images en réserve : $(ls paquets/nuages/anim/*.jpg 2>/dev/null | wc -l)"
+
+      - name: Fabriquer
         env:
           OPEN_METEO_CLE: ${{ secrets.OPEN_METEO_CLE }}
           METEOFRANCE_CLE: ${{ secrets.METEOFRANCE_CLE }}
-        run: node build.mjs
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(date -u +%M)" -lt 20 ]; then
+            echo "── passage complet : prévisions + nuages ──"
+            node build.mjs
+          else
+            echo "── passage court : nuages seulement ──"
+            node animation.mjs
+          fi
 
-      - name: Publier les paquets
+      # ─────────────────────────────────────────────────────────────────
+      # Publication sur une branche à commit unique.
+      #
+      # Les images changent toutes les vingt minutes. Versionner ça dans
+      # l'historique ferait grossir le dépôt d'une trentaine de mégaoctets
+      # par jour — il serait ingérable en un mois.
+      #
+      # On écrase donc « site » avec un commit sans parent à chaque fois.
+      # Le dépôt garde la taille de son contenu, pour toujours. Le code
+      # source, lui, reste sur main avec son historique intact.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Publier
         run: |
           git config user.name  "Mata'i"
           git config user.email "matai@users.noreply.github.com"
-          git add paquets/
-          git diff --staged --quiet || git commit -m "Prévisions du $(date -u '+%d/%m/%Y %H:%M') UTC"
-          git pull --rebase --autostash origin main
-          git push
+          touch .nojekyll
+          git checkout --orphan publication
+          git reset --quiet
+          git add -f .nojekyll paquets
+          git commit -q -m "Site du $(date -u '+%d/%m/%Y %H:%M') UTC"
+          git push --force origin publication:site
+          echo "publié : $(du -sh paquets | cut -f1)"
