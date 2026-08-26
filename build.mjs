@@ -93,7 +93,7 @@ function urlMarine(s) {
 function fausseReponse(s) {
   const t0 = new Date();
   t0.setMinutes(0, 0, 0);
-  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [];
+  const temps = [], vent = [], raf = [], dir = [], houle = [], per = [], hdir = [], swell = [], pluie = [];
   for (let i = 0; i < HEURES + 12; i++) {
     const d = new Date(t0.getTime() + i * 3600000);
     temps.push(d.toISOString().slice(0, 16));
@@ -105,9 +105,10 @@ function fausseReponse(s) {
     per.push(arrondir(11 + cycle * 2, 1));
     hdir.push(200);
     swell.push(arrondir(1.3 + cycle * 0.7, 2));
+    pluie.push(i % 9 === 0 ? 2.4 : 0);
   }
   return {
-    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir } },
+    meteo:  { hourly: { time: temps, wind_speed_10m: vent, wind_gusts_10m: raf, wind_direction_10m: dir, precipitation: pluie } },
     marine: { hourly: { time: temps, wave_height: houle, wave_period: per, wave_direction: hdir, swell_wave_height: swell } }
   };
 }
@@ -153,6 +154,10 @@ async function traiterSpot(spot) {
       vent:    arrondir(meteo.hourly.wind_speed_10m[i], 1),
       rafale:  arrondir(meteo.hourly.wind_gusts_10m?.[i], 0),
       dir:     arrondir(meteo.hourly.wind_direction_10m[i], 0),
+      // La pluie était déjà demandée à l'API mais jetée. Pour un pêcheur
+      // elle ne change rien ; pour un touriste qui choisit sa journée et
+      // pour un prestataire de plein air, c'est la première question.
+      pluie:   arrondir(meteo.hourly.precipitation?.[i], 1),
       houle:   k === undefined ? null : arrondir(M.wave_height?.[k], 2),
       periode: k === undefined ? null : arrondir(M.wave_period?.[k], 1),
       houleDir:k === undefined ? null : arrondir(M.wave_direction?.[k], 0),
