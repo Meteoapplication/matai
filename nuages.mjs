@@ -104,6 +104,41 @@ export function tailleFenetre(lat, lon, taille, degres) {
   return Math.round(Math.abs(b.col - a.col));
 }
 
+/**
+ * L'emprise régionale : toute la Polynésie française d'un seul tenant.
+ *
+ * La vignette par île sert à l'écran Sortie — un coup d'œil, pas plus.
+ * Celle-ci sert à explorer : on la publie à la résolution native du
+ * satellite pour que l'utilisateur puisse se déplacer et zoomer jusqu'à
+ * la limite physique de 2 km par pixel, et pas un centimètre de plus.
+ *
+ * Environ 1233 × 1067 pixels, soit 2464 km sur 2133 km. Elle n'est
+ * téléchargée que quand on ouvre la carte, jamais au démarrage.
+ */
+const REGION = { lat: [-28.5, -7.5], lon: [-156.5, -133.5] };
+
+export function empriseRegion(taille) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let la = REGION.lat[0]; la <= REGION.lat[1]; la += 0.5) {
+    for (let lo = REGION.lon[0]; lo <= REGION.lon[1]; lo += 0.5) {
+      const p = versPixel(la, lo, taille);
+      if (!p) continue;
+      if (p.col < x0) x0 = p.col;
+      if (p.col > x1) x1 = p.col;
+      if (p.lig < y0) y0 = p.lig;
+      if (p.lig > y1) y1 = p.lig;
+    }
+  }
+  const gauche = Math.max(0, Math.floor(x0));
+  const haut = Math.max(0, Math.floor(y0));
+  return {
+    gauche,
+    haut,
+    largeur: Math.min(Math.ceil(x1) - gauche, taille - gauche),
+    hauteur: Math.min(Math.ceil(y1) - haut, taille - haut)
+  };
+}
+
 async function telecharger(url) {
   const r = await fetch(url, { signal: AbortSignal.timeout(120000) });
   if (!r.ok) throw new Error(`HTTP ${r.status} sur ${url}`);
@@ -135,6 +170,33 @@ export async function decouper(sharp, imageEntiere, lat, lon, taille, cote = 520
 }
 
 /**
+ * Découpe l'emprise régionale et l'écrit. Renvoie de quoi replacer
+ * n'importe quel point du globe dans l'image côté application : sans
+ * l'origine et la taille du disque, les repères seraient décoratifs.
+ */
+export async function decouperRegion(sharp, entiere, taille, sortie, horodatage) {
+  const e = empriseRegion(taille);
+  const image = await sharp(entiere)
+    .extract({ left: e.gauche, top: e.haut, width: e.largeur, height: e.hauteur })
+    .jpeg({ quality: 76, progressive: true })
+    .toBuffer();
+
+  await writeFile(join(sortie, 'nuages', 'polynesie.jpg'), image);
+
+  return {
+    fichier: 'nuages/polynesie.jpg',
+    horodatage,
+    largeur: e.largeur,
+    hauteur: e.hauteur,
+    origine: { col: e.gauche, lig: e.haut },
+    disque: taille,
+    kilometresParPixel: 2,
+    source: 'NOAA GOES-18 (GOES-West) — GEOCOLOR',
+    poids: image.length
+  };
+}
+
+/**
  * Produit une vignette par île. Renvoie un objet { ileId: infos } que
  * build.mjs joint aux paquets.
  *
@@ -147,7 +209,7 @@ export async function produire(iles, sortie) {
     sharp = (await import('sharp')).default;
   } catch (e) {
     console.log('  nuages : sharp absent, étape ignorée');
-    return {};
+    return { iles: {}, region: null };
   }
 
   let entiere;
@@ -156,15 +218,23 @@ export async function produire(iles, sortie) {
     console.log(`  nuages : disque complet reçu (${(entiere.length / 1048576).toFixed(1)} Mo)`);
   } catch (e) {
     console.log(`  nuages : téléchargement impossible — ${e.message}`);
-    return {};
+    return { iles: {}, region: null };
   }
 
   const meta = await sharp(entiere).metadata();
   const taille = meta.width;
   const horodatage = new Date().toISOString();
-  const resultat = {};
+  const resultat = { iles: {}, region: null };
 
   await mkdir(join(sortie, 'nuages'), { recursive: true });
+
+  try {
+    resultat.region = await decouperRegion(sharp, entiere, taille, sortie, horodatage);
+    const r = resultat.region;
+    console.log(`  nuages : région entière ${r.largeur}×${r.hauteur} (${(r.poids / 1024).toFixed(0)} Ko)`);
+  } catch (e) {
+    console.log(`  nuages : région entière échouée — ${e.message}`);
+  }
 
   for (const ile of iles) {
     const n = ile.spots.length || 1;
@@ -173,7 +243,7 @@ export async function produire(iles, sortie) {
     try {
       const vignette = await decouper(sharp, entiere, lat, lon, taille);
       await writeFile(join(sortie, 'nuages', `${ile.id}.jpg`), vignette);
-      resultat[ile.id] = {
+      resultat.iles[ile.id] = {
         fichier: `nuages/${ile.id}.jpg`,
         horodatage,
         fenetre: FENETRE,

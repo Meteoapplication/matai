@@ -186,7 +186,7 @@ async function principal() {
   // Les nuages : un seul téléchargement du disque satellite pour toutes les
   // îles, découpé ensuite. C'est un plus — jamais une raison de faire
   // échouer la publication des prévisions.
-  let nuages = {};
+  let nuages = { iles: {}, region: null };
   if (!DEMO && !VERIF) {
     try {
       nuages = await produireNuages(registre.iles, SORTIE);
@@ -246,7 +246,8 @@ async function principal() {
       source: 'Open-Meteo — modèles ECMWF IFS et MFWAM (Météo-France)',
       avertissement: 'Prévision indicative. Ne remplace pas les bulletins de Météo-France Polynésie ni une carte marine officielle.',
       vigilance,
-      nuages: nuages[ile.id] || null,
+      nuages: (nuages.iles && nuages.iles[ile.id]) || null,
+      cielRegional: nuages.region || null,
       spots
     };
 
