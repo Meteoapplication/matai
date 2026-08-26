@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { analyser } from './seuils.mjs';
 import { recuperer as recupererVigilance, inconnu as vigilanceInconnue } from './vigilance.mjs';
 import { produire as produireNuages } from './nuages.mjs';
+import { produireAnimation } from './animation.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const SORTIE = join(ICI, 'paquets');
@@ -187,11 +188,21 @@ async function principal() {
   // îles, découpé ensuite. C'est un plus — jamais une raison de faire
   // échouer la publication des prévisions.
   let nuages = { iles: {}, region: null };
+  let animation = null;
   if (!DEMO && !VERIF) {
     try {
       nuages = await produireNuages(registre.iles, SORTIE);
     } catch (e) {
       log(`  nuages : étape abandonnée — ${(e && e.message) || e}`);
+    }
+    // La boucle animée. Elle vit à part : l'app la lit directement à son
+    // adresse fixe, sans repasser par les paquets. C'est ce qui permet de
+    // rafraîchir les nuages toutes les vingt minutes sans refaire les
+    // prévisions, qui, elles, ne changent que quelques fois par jour.
+    try {
+      animation = await produireAnimation(SORTIE);
+    } catch (e) {
+      log(`  animation : étape abandonnée — ${(e && e.message) || e}`);
     }
   }
 
@@ -247,7 +258,9 @@ async function principal() {
       avertissement: 'Prévision indicative. Ne remplace pas les bulletins de Météo-France Polynésie ni une carte marine officielle.',
       vigilance,
       nuages: (nuages.iles && nuages.iles[ile.id]) || null,
-      cielRegional: nuages.region || null,
+      cielRegional: nuages.region
+        ? { ...nuages.region, animation: 'nuages/anim/index.json' }
+        : null,
       spots
     };
 
