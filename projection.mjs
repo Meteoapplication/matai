@@ -241,6 +241,59 @@ function bandeau(largeur, hauteur, minutes) {
  *
  * @param sortie dossier des paquets
  */
+/**
+ * ⚠️  L'INDEX PORTE DES CHEMINS, PAS DES NOMS DE FICHIERS.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * `animation.mjs` écrit dans son index :
+ *
+ *     { "fichier": "nuages/anim/20262400110.jpg", "t": "…" }
+ *
+ * — un chemin relatif à `paquets/`, parce que c'est l'application qui le
+ * consomme et qui le colle derrière l'adresse du site. Ce code-ci prenait
+ * ce champ pour un simple nom de fichier et le recollait derrière le
+ * dossier source :
+ *
+ *     join('paquets/nuages/anim', 'nuages/anim/20262400110.jpg')
+ *       → paquets/nuages/anim/nuages/anim/20262400110.jpg
+ *
+ * Le chemin doublé n'existe pas, `sharp` refuse, et la projection est
+ * abandonnée. Silencieusement : `build.mjs` attrape l'erreur — c'est
+ * voulu, un satellite qui tombe ne doit pas arrêter les prévisions — et
+ * écrit une ligne de journal que personne ne lit tant que tout est vert.
+ *
+ * Résultat : le point 6 du cahier des charges, la projection à une heure,
+ * n'a JAMAIS été publié une seule fois en production. L'animation
+ * marchait, les tests passaient, l'écran affichait poliment « pas encore
+ * de projection », et rien n'était faux — sauf que la fonctionnalité
+ * n'existait pas.
+ *
+ * Aucun banc ne pouvait le voir : les essais fabriquent leur index avec
+ * des noms nus, parce que c'est ce que ce code attendait. Le banc a
+ * éprouvé l'accord du code avec lui-même. Il a fallu lire une ligne de
+ * journal d'un vrai passage.
+ *
+ * On ne garde donc que le dernier segment, quelle que soit la forme reçue.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * @param index  l'index de l'animation, tel qu'`animation.mjs` l'écrit
+ * @returns les noms de fichiers nus, en ordre chronologique
+ */
+export function nomsDepuisIndex(index) {
+  if (!index || !Array.isArray(index.images)) return [];
+  return index.images
+    .map((x) => (typeof x === 'string' ? x : (x && (x.fichier || x.horodatage))))
+    .filter(Boolean)
+    // ⚠️  `basename` ne coupe QUE le séparateur de la plateforme. Sur le
+    // serveur GitHub, qui est un Linux, il laisserait passer intact un
+    // « nuages\\anim\\xxx.jpg » écrit depuis Windows — et le projet se
+    // développe sous Windows. On coupe donc sur les deux séparateurs,
+    // quelle que soit la machine qui a écrit l'index.
+    .map((n) => String(n).split(/[\\/]/).pop())
+    .map((n) => (n.endsWith('.jpg') ? n : n + '.jpg'))
+    .sort();
+}
+
 export async function produireProjection(sortie = SORTIE) {
   let sharp;
   try {
@@ -258,11 +311,7 @@ export async function produireProjection(sortie = SORTIE) {
   }
 
   // Les noms de fichiers, dans l'ordre chronologique.
-  const noms = index.images
-    .map((x) => (typeof x === 'string' ? x : x.fichier || x.horodatage))
-    .filter(Boolean)
-    .map((n) => (n.endsWith('.jpg') ? n : n + '.jpg'))
-    .sort();
+  const noms = nomsDepuisIndex(index);
 
   const chemins = noms.map((n) => join(dossierSource, n));
 
