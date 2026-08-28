@@ -653,10 +653,21 @@ async function principal() {
         // ni de combien, ni sur quelle paire. Sans ces nombres, régler un
         // seuil revient à deviner, et on ne règle pas au jugé un calcul qui
         // décide de ce qu'on montre comme une prévision.
+        //
+        // ⚠️  ET SEULEMENT LES CHIFFRES QUI EXISTENT. Le premier jet écrivait
+        // « dispersion undefined » chaque fois que le refus venait de
+        // l'éclairement — la dispersion n'est calculée qu'après ce test-là.
+        // Un journal qui affiche « undefined » apprend à ne plus être lu.
         const d = pr.detail;
-        if (d && (d.dxs || d.dispersion !== undefined)) {
-          log(`    mesures par paire : dx ${JSON.stringify(d.dxs)} `
-            + `· dy ${JSON.stringify(d.dys)} · dispersion ${d.dispersion}`);
+        if (d && (d.dxs || d.dispersion !== undefined || d.eclairement !== undefined)) {
+          const bouts = [];
+          if (d.dxs) bouts.push(`dx ${JSON.stringify(d.dxs)}`);
+          if (d.dys) bouts.push(`dy ${JSON.stringify(d.dys)}`);
+          if (d.dispersion !== undefined) bouts.push(`dispersion ${d.dispersion}`);
+          if (d.eclairement !== undefined) {
+            bouts.push(`éclairement ${Math.round(d.eclairement * 100)} % (seuil 15 %)`);
+          }
+          log(`    mesures par paire : ${bouts.join(' · ')}`);
         }
       } else {
         log(`  projection : ${pr.images.length} image(s), déplacement `
