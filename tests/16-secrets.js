@@ -54,33 +54,77 @@ module.exports = function () {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-    // Chaque appel à console.log / log(...) est relu ligne à ligne.
-    const lignes = source.split('\n');
-    lignes.forEach((ligne, i) => {
-      if (!/\b(console\.(log|error|warn)|log)\s*\(/.test(ligne)) return;
+    // ═════════════════════════════════════════════════════════════════
+    // ⚠️  ON RELIT DES APPELS ENTIERS, PLUS DES LIGNES.
+    //
+    // Ce test lisait le fichier ligne par ligne et n'examinait que celles
+    // qui contenaient elles-mêmes « log( ». Un appel écrit sur plusieurs
+    // lignes lui échappait entièrement :
+    //
+    //     log(CLE
+    //       ? present('OPEN_METEO_CLE', CLE) + ' — accès ' + CLE
+    //       : 'absente');
+    //
+    // La première ligne porte « log( » mais aucune concaténation ; la
+    // deuxième porte la fuite mais pas « log( », donc elle n'était même
+    // pas regardée. Vérifié en sabotant exactement comme ci-dessus : zéro
+    // faute relevée.
+    //
+    // Ce n'est pas un cas tordu — c'est la forme normale d'un message un
+    // peu long, et `build.mjs` l'a prise le jour où on a voulu distinguer
+    // les deux clés dans le journal. Le banc éprouvait une mise en page,
+    // pas une propriété.
+    //
+    // On repart donc de chaque « log( » et on avance jusqu'à sa parenthèse
+    // fermante, en sautant ce qui est entre guillemets, pour relire
+    // l'appel COMPLET quelle que soit sa mise en page.
+    // ═════════════════════════════════════════════════════════════════
+    const appels = [];
+    const debut = /\b(?:console\.(?:log|error|warn)|log)\s*\(/g;
+    let m;
+    while ((m = debut.exec(source)) !== null) {
+      let i = m.index + m[0].length, profondeur = 1, guillemet = null;
+      while (i < source.length && profondeur > 0) {
+        const c = source[i];
+        if (guillemet) {
+          if (c === '\\') i++;
+          else if (c === guillemet) guillemet = null;
+        } else if (c === '"' || c === "'" || c === '`') {
+          guillemet = c;
+        } else if (c === '(') profondeur++;
+        else if (c === ')') profondeur--;
+        i++;
+      }
+      appels.push({
+        texte: source.slice(m.index, i),
+        ligne: source.slice(0, m.index).split('\n').length
+      });
+    }
 
+    for (const a of appels) {
       // La longueur est permise, la valeur non.
-      const sansLongueur = ligne.replace(/\.length\b/g, '');
+      const sansLongueur = a.texte.replace(/\.length\b/g, '');
+      const extrait = a.texte.replace(/\s+/g, ' ').trim().slice(0, 110);
 
       for (const c of CLES) {
         if (!new RegExp('\\b' + c + '\\b').test(sansLongueur)) continue;
         // `process.env.X || ''` passé à une fonction qui n'écrit que la
-        // longueur est le cas légitime : on exige que la ligne ne contienne
+        // longueur est le cas légitime : on exige que l'appel ne contienne
         // pas la variable dans une concaténation de texte.
         if (/[+`]\s*\w*\s*(process\.env\.)?(OPEN_METEO_CLE|METEOFRANCE_CLE)/.test(sansLongueur)
             || /\$\{[^}]*(OPEN_METEO_CLE|METEOFRANCE_CLE)[^}]*\}/.test(sansLongueur)) {
-          fautes.push(nom + ':' + (i + 1) + ' — une clé est concaténée dans un '
-            + 'message de journal : « ' + ligne.trim().slice(0, 90) + ' »');
+          fautes.push(nom + ':' + a.ligne + ' — une clé est concaténée dans un '
+            + 'message de journal : « ' + extrait + ' »');
         }
       }
 
       // La variable locale `CLE` de build.mjs porte la clé Open-Meteo.
       if (/\bCLE\b/.test(sansLongueur)
           && /[+`]\s*CLE\b|\$\{\s*CLE\s*\}/.test(sansLongueur)) {
-        fautes.push(nom + ':' + (i + 1) + ' — la clé Open-Meteo est écrite dans '
-          + 'un message de journal : « ' + ligne.trim().slice(0, 90) + ' »');
+        fautes.push(nom + ':' + a.ligne + ' — la clé Open-Meteo est écrite dans '
+          + 'un message de journal : « ' + extrait + ' »');
       }
-    });
+    }
   }
   notes.push(relus + ' module(s) relus, aucun ne concatène une clé dans un journal');
 
