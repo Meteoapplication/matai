@@ -1,0 +1,4 @@
+{
+  "_pourquoi": "Le backend est en modules ES (\"type\": \"module\" à la racine). Le banc d'essai, lui, doit rester en CommonJS : il charge les modules de l'application en les transformant à la volée, et cette mécanique repose sur `require` et `new Function`. Ce fichier ne fait que rétablir CommonJS pour ce dossier — Node lit le package.json le plus proche.",
+  "type": "commonjs"
+}
