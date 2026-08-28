@@ -678,7 +678,8 @@ async function principal() {
     try {
       const pr = await produireProjection(SORTIE);
       if (pr.erreur) {
-        log(`  projection : rien publié — ${pr.erreur}`);
+        log(`  projection : rien publié — ${pr.erreur}`
+          + (pr.canal ? ` (mesure sur ${pr.canal})` : ''));
         // ⚠️  ET LES CHIFFRES QUI ONT MOTIVÉ LE REFUS.
         //
         // Le verdict seul ne sert à rien : « mouvement incohérent » ne dit
@@ -709,7 +710,8 @@ async function principal() {
         }
       } else {
         log(`  projection : ${pr.images.length} image(s), déplacement `
-          + `${pr.mouvement.dxPixels}/${pr.mouvement.dyPixels} px par pas`);
+          + `${pr.mouvement.dxPixels}/${pr.mouvement.dyPixels} px par pas`
+          + ` (mesure sur ${pr.mouvement.canal})`);
       }
     } catch (e) {
       log(`  projection : étape abandonnée — ${(e && e.message) || e}`);

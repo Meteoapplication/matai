@@ -33,7 +33,7 @@
 import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { urlDatee, telecharger, recadrerRegion } from './nuages.mjs';
+import { urlDatee, urlBande, BANDE_INFRAROUGE, telecharger, recadrerRegion } from './nuages.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const SORTIE = join(ICI, 'paquets');
@@ -137,6 +137,10 @@ export async function produireAnimation(sortie = SORTIE) {
   const dossier = join(sortie, 'nuages', 'anim');
   await mkdir(dossier, { recursive: true });
 
+  // Le canal de MESURE, en infrarouge. Voir le commentaire plus bas.
+  const dossierIr = join(sortie, 'nuages', 'anim-ir');
+  await mkdir(dossierIr, { recursive: true });
+
   const attendus = creneaux();
   const presents = await enReserve();
   const manquants = attendus.filter((h) => !presents.has(h));
@@ -146,6 +150,7 @@ export async function produireAnimation(sortie = SORTIE) {
   const debut = Date.now();
   let emprise = null;
   let obtenues = 0;
+  let obtenuesIr = 0;
 
   // Du plus récent au plus ancien : si le budget saute, on aura au moins
   // les images qui comptent le plus.
@@ -163,6 +168,29 @@ export async function produireAnimation(sortie = SORTIE) {
       presents.add(h);
       obtenues++;
       console.log(`  animation : ${h} (${(image.length / 1024).toFixed(0)} Ko)`);
+
+      // ═══════════════════════════════════════════════════════════════
+      // ⚠️  LE MÊME INSTANT, EN INFRAROUGE, POUR LA MESURE.
+      //
+      // Ce n'est PAS ce que les gens regardent : c'est le seul canal où le
+      // déplacement des nuages est mesurable à toute heure. En lumière
+      // visible, à l'aube et au crépuscule, la frontière jour/nuit balaie
+      // le Pacifique à 1 600 km/h — cinquante fois la vitesse d'un alizé —
+      // et la corrélation la suit elle, pas les nuages.
+      //
+      // Un échec ici n'est jamais grave : `projection.mjs` revient sur le
+      // visible s'il ne trouve pas d'infrarouge, et refuse alors aux heures
+      // de bascule comme il le faisait avant.
+      // ═══════════════════════════════════════════════════════════════
+      try {
+        const ir = await telecharger(urlBande(h, BANDE_INFRAROUGE));
+        const metaIr = await sharp(ir).metadata();
+        const { image: imgIr } = await recadrerRegion(sharp, ir, metaIr.width, QUALITE);
+        await writeFile(join(dossierIr, `${h}.jpg`), imgIr);
+        obtenuesIr++;
+      } catch (eIr) {
+        console.log(`  animation : infrarouge ${h} indisponible — ${eIr.message}`);
+      }
     } catch (e) {
       // Une image absente n'est pas une panne : le satellite saute parfois
       // un créneau pour une manœuvre ou un étalonnage.
@@ -171,11 +199,24 @@ export async function produireAnimation(sortie = SORTIE) {
   }
 
   // On garde exactement la fenêtre, et on efface le reste.
+  //
+  // ⚠️  DANS LES DEUX DOSSIERS. Le ménage ne connaissait que le visible ;
+  // l'infrarouge se serait accumulé indéfiniment sur la branche publiée,
+  // qui est réécrite à chaque passage et grossirait de 130 Ko par créneau
+  // sans que rien ne les efface jamais.
   const gardees = attendus.filter((h) => presents.has(h));
   for (const h of presents) {
     if (gardees.includes(h)) continue;
     try { await unlink(join(dossier, `${h}.jpg`)); } catch {}
   }
+  try {
+    for (const n of await readdir(dossierIr)) {
+      const h = n.replace(/\.jpg$/, '');
+      if (n.endsWith('.jpg') && !gardees.includes(h)) {
+        await unlink(join(dossierIr, n)).catch(() => {});
+      }
+    }
+  } catch { /* le dossier n'existe pas encore */ }
 
   if (gardees.length === 0) {
     console.log('  animation : aucune image disponible, index inchangé');
@@ -218,6 +259,15 @@ export async function produireAnimation(sortie = SORTIE) {
   const derniere = versDate(gardees[gardees.length - 1]);
   const age = Math.round((Date.now() - derniere.getTime()) / 60000);
   console.log(`  animation : ${gardees.length} images, ${obtenues} nouvelle(s), la plus fraîche a ${age} min`);
+
+  // Combien d'images de MESURE sont réellement en main. Si ce nombre reste
+  // bas, la projection retombera sur le visible et refusera aux heures de
+  // bascule : il faut le voir dans le journal, pas le deviner.
+  let enIr = 0;
+  try {
+    enIr = (await readdir(dossierIr)).filter((n) => n.endsWith('.jpg')).length;
+  } catch { /* dossier absent */ }
+  console.log(`  animation : ${enIr} image(s) infrarouge pour la mesure, ${obtenuesIr} nouvelle(s)`);
 
   return index;
 }

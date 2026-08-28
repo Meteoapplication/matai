@@ -35,8 +35,26 @@ const ICI = dirname(fileURLToPath(import.meta.url));
 
 /**
  * L'image source. GEOCOLOR est la composition qui ressemble à ce que
- * verrait l'œil de jour, et bascule en infrarouge la nuit — c'est la seule
- * qui reste lisible 24 h sur 24.
+ * verrait l'œil de jour.
+ *
+ * ⚠️  ON A LONGTEMPS ÉCRIT ICI QUE GEOCOLOR « BASCULE EN INFRAROUGE LA NUIT,
+ *     C'EST LA SEULE QUI RESTE LISIBLE 24 H SUR 24 ». C'EST FAUX.
+ *
+ * GEOCOLOR a bien un rendu de nuit, mais il s'appuie sur les lumières des
+ * villes et un voile de nuages faiblement éclairé par la lune. Au-dessus du
+ * Pacifique, sans ville et sans lune, il ne reste presque rien. Mesuré sur
+ * le recadrage régional réellement publié, au crépuscule du 28 août 2026 :
+ *
+ *     heure locale   GEOCOLOR   infrarouge (bande 13)
+ *      16 h 10          90,9          110,0
+ *      16 h 50          58,4          110,4
+ *      17 h 30          24,0          111,0
+ *      18 h 10          18,7          110,8
+ *      18 h 50          17,8          110,3
+ *
+ * Dix-sept sur deux cent cinquante-cinq : un carré noir. La moitié de
+ * chaque journée, l'image principale de l'application ne montrait rien —
+ * et personne ne l'avait vu parce que le développement se fait de jour.
  *
  * 5424 pixels = résolution native de 2 km. C'est le minimum pour qu'une
  * fenêtre de quelques degrés autour d'une île reste exploitable.
@@ -48,12 +66,53 @@ export const DOSSIER_GOES =
 export const SOURCE = `${DOSSIER_GOES}/5424x5424.jpg`;
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════
+ * LES BANDES DU SATELLITE, ET POURQUOI IL EN FAUT DEUX.
+ *
+ * `GEOCOLOR` est une composition destinée à l'œil : elle est belle, et elle
+ * s'éteint la nuit (voir la mesure ci-dessus).
+ *
+ * `13` est la bande infrarouge thermique à 10,3 µm. Elle ne voit pas la
+ * lumière du soleil mais la CHALEUR des sommets de nuages. Conséquence :
+ * elle est identique de jour et de nuit, et elle ne connaît pas de
+ * terminateur — la frontière jour/nuit qui balaie le Pacifique à 1 600 km/h
+ * et que la corrélation suivait au lieu des nuages.
+ *
+ * Elle sert donc à MESURER le déplacement. Ce que les gens regardent reste
+ * GEOCOLOR tant qu'il fait jour.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+export const BANDE_VISIBLE = 'GEOCOLOR';
+export const BANDE_INFRAROUGE = '13';
+
+/**
  * L'image d'un instant précis. L'horodatage NOAA s'écrit AAAAJJJHHMM, où
  * JJJ est le quantième de l'année — pas le mois et le jour. C'est ce qui
  * permet de remonter le temps et de fabriquer une animation.
  */
 export function urlDatee(horodatage, taille = 5424) {
-  return `${DOSSIER_GOES}/${horodatage}_GOES18-ABI-FD-GEOCOLOR-${taille}x${taille}.jpg`;
+  return urlBande(horodatage, BANDE_VISIBLE, taille);
+}
+
+/**
+ * La même image, dans la bande demandée.
+ *
+ * ⚠️  La taille par défaut n'est pas la même que pour le visible, et c'est
+ * délibéré. L'infrarouge ne sert qu'à la MESURE : le recadrage régional y
+ * fait 412 × 357 pixels, soit 6 km le pixel, et un alizé de 16 nœuds
+ * parcourt 20 km en quarante minutes — plus de trois pixels, largement
+ * mesurable. Prendre 5424 coûterait dix mégaoctets par créneau au lieu de
+ * deux pour une précision dont la corrélation n'a pas l'usage.
+ *
+ * Le jour où l'infrarouge servira aussi à l'AFFICHAGE, il faudra repasser
+ * à 5424 — c'est l'œil qui l'exigera, pas le calcul.
+ */
+export function urlBande(horodatage, bande = BANDE_VISIBLE, taille) {
+  const t = taille || (bande === BANDE_VISIBLE ? 5424 : 1808);
+  const dossier = bande === BANDE_VISIBLE
+    ? DOSSIER_GOES
+    : `https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/${bande}`;
+  return `${dossier}/${horodatage}_GOES18-ABI-FD-${bande}-${t}x${t}.jpg`;
 }
 
 /** Largeur de la fenêtre découpée, en degrés. */

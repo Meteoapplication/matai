@@ -59,7 +59,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, unlink, access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CADENCE, versDate, versHorodatage } from './animation.mjs';
@@ -710,7 +710,33 @@ export async function produireProjection(sortie = SORTIE) {
   // Les noms de fichiers, dans l'ordre chronologique.
   const noms = nomsDepuisIndex(index);
 
-  const chemins = noms.map((n) => join(dossierSource, n));
+  // ═══════════════════════════════════════════════════════════════════════
+  // ⚠️  ON MESURE SUR L'INFRAROUGE, ON AFFICHE LE VISIBLE.
+  //
+  // Les deux dossiers portent les MÊMES créneaux, le MÊME recadrage, et
+  // l'infrarouge n'est jamais montré à personne : il ne sert qu'à trouver
+  // de combien le ciel s'est déplacé. C'est le seul canal où cette mesure
+  // est possible à toute heure — voir la mesure des luminances dans
+  // nuages.mjs : au crépuscule, le visible tombe à 17 sur 255 et la
+  // corrélation suit la frontière jour/nuit au lieu des nuages.
+  //
+  // Si l'infrarouge manque — première mise en service, créneau sauté par
+  // le satellite, budget de temps épuisé — on retombe sur le visible. La
+  // projection redevient alors ce qu'elle était : correcte de jour,
+  // refusée à l'aube et au crépuscule. Un repli qui dégrade proprement
+  // vaut mieux qu'une dépendance qui casse tout.
+  // ═══════════════════════════════════════════════════════════════════════
+  const dossierIr = join(sortie, 'nuages', 'anim-ir');
+  let canal = 'infrarouge';
+  let chemins = noms.map((n) => join(dossierIr, n));
+
+  const toutesLa = await Promise.all(
+    chemins.map((c) => access(c).then(() => true).catch(() => false))
+  );
+  if (toutesLa.some((x) => !x)) {
+    canal = 'visible';
+    chemins = noms.map((n) => join(dossierSource, n));
+  }
 
   const mouvement = await mesurerMouvement(sharp, chemins);
   if (!mouvement || mouvement.refus) {
@@ -721,6 +747,7 @@ export async function produireProjection(sortie = SORTIE) {
     return {
       erreur: (mouvement && mouvement.refus) || 'mouvement non mesurable',
       detail: mouvement || null,
+      canal,
       images: []
     };
   }
@@ -800,7 +827,11 @@ export async function produireProjection(sortie = SORTIE) {
       dxPixels: mouvement.dx,
       dyPixels: mouvement.dy,
       dispersion: mouvement.dispersion,
-      surImages: mouvement.images
+      surImages: mouvement.images,
+      // Sur quoi la mesure a été faite. Publié pour qu'on n'ait jamais à le
+      // deviner : « infrarouge » ou « visible » change ce qu'on peut croire
+      // du résultat aux heures de bascule.
+      canal
     },
     images: produites
   };
