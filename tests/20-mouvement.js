@@ -318,12 +318,99 @@ module.exports = async function () {
       }
     }
 
-    // Et la remise à niveau doit être appliquée DANS le module.
+    // ═══════════════════════════════════════════════════════════════════
+    // ⚠️  UN CIEL QUI SE DÉCHIRE DOIT ÊTRE REFUSÉ — ET LA DISPERSION NE LE
+    //     VOIT PAS.
+    //
+    // C'est le défaut le plus profond de cette fonctionnalité, et il n'est
+    // pas dans la mesure : il est dans le MODÈLE. Tout repose sur l'idée
+    // qu'on peut mesurer un déplacement et translater toute l'image. Or
+    // l'emprise régionale fait 2 464 km — Paris-Moscou.
+    //
+    // Mesuré le 28 août 2026 sur les VRAIES images infrarouges, seize
+    // tuiles sur une même paire de quarante minutes : dx de −2 à +4, dy de
+    // −3 à +4. Trente-six kilomètres de désaccord. Le nord-est descendait,
+    // le sud-ouest montait, le centre ne bougeait pas.
+    //
+    // Ce que ce cas fabrique : un ciel dont la moitié gauche part vers
+    // l'ouest et la moitié droite vers l'est, RÉGULIÈREMENT. Les quatre
+    // paires sont alors parfaitement d'accord entre elles — la dispersion
+    // vaut zéro, le contrôle du temps est content — et la médiane décrit
+    // un mouvement qui n'a lieu NULLE PART.
+    //
+    // Sans le contrôle spatial, on publierait six images translatées d'un
+    // vecteur moyen : la moitié de la région déplacée dans la mauvaise
+    // direction, sous un bandeau « PROJECTION ».
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const gauche = champ(45, 3).map((c) => ({ ...c, x: c.x * 0.5 }));
+      const droite = champ(45, 9).map((c) => ({ ...c, x: L * 0.5 + c.x * 0.5 }));
+
+      const chemins = [];
+      for (let i = 0; i < 9; i++) {
+        // Chaque moitié bouge d'un vecteur constant, mais PAS le même.
+        const amasI = [
+          ...gauche.map((c) => ({ ...c, x: c.x - i * 2.6, y: c.y + i * 0.9 })),
+          ...droite.map((c) => ({ ...c, x: c.x + i * 2.6, y: c.y - i * 0.9 }))
+        ];
+        const f = path.join(dossier, 'dechire-' + i + '.jpg');
+        await writeFile(f, await rendre(sharp, amasI, 0, 0, 0, 7 + i));
+        chemins.push(f);
+      }
+
+      const m = await P.mesurerMouvement(sharp, chemins);
+      if (!m) {
+        fautes.push('ciel déchiré : aucune mesure rendue sur 9 images');
+      } else if (!m.refus) {
+        fautes.push('UN CIEL QUI SE DÉCHIRE N’EST PAS REFUSÉ : la mesure rend '
+          + m.dx.toFixed(2) + ' / ' + m.dy.toFixed(2) + ' (dispersion '
+          + m.dispersion + ', désaccord entre tuiles ' + m.desaccord + '). '
+          + 'La moitié de la région serait déplacée dans la mauvaise '
+          + 'direction sous un bandeau « PROJECTION »');
+      } else if (!/seul bloc/.test(m.refus)) {
+        notes.push('ciel déchiré → refusé par « ' + m.refus + ' » : le contrôle '
+          + 'spatial n’a pas eu à servir sur ce cas-ci');
+      } else {
+        notes.push('ciel déchiré → refusé : désaccord entre tuiles ' + m.desaccord
+          + ' (seuil 4), alors que la dispersion dans le temps valait '
+          + m.dispersion + ' — elle seule aurait laissé passer');
+      }
+    }
+
+    // ── et un ciel qui se déplace VRAIMENT d'un bloc ne doit pas être pris
+    //    pour un ciel déchiré. Le garde-fou vaut par ce qu'il laisse passer.
+    {
+      const chemins = [];
+      for (let i = 0; i < 9; i++) {
+        const f = path.join(dossier, 'bloc-' + i + '.jpg');
+        await writeFile(f, await rendre(sharp, amas, i * 2.40, i * 0.87, 0, 7 + i));
+        chemins.push(f);
+      }
+      const m = await P.mesurerMouvement(sharp, chemins);
+      if (!m || m.refus) {
+        fautes.push('un alizé uniforme est refusé : « '
+          + ((m && m.refus) || 'aucune mesure') + ' » — le seuil de désaccord '
+          + 'est trop serré et plus aucune projection ne sortirait jamais');
+      } else if (m.desaccord > 1) {
+        fautes.push('un alizé uniforme donne un désaccord entre tuiles de '
+          + m.desaccord + ' : le repère du seuil (0 ou 1 sur un champ '
+          + 'uniforme) ne tient plus, et le seuil de 4 ne veut plus rien dire');
+      } else {
+        notes.push('alizé uniforme → désaccord entre tuiles ' + m.desaccord + ', accepté');
+      }
+    }
+
+    // Et les garde-fous doivent être DANS le module, pas seulement ici.
     {
       const src = fs.readFileSync(path.resolve(__dirname, '..', 'projection.mjs'), 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/(^|[^:])\/\/.*$/gm, '$1');
-      if (!/decalage\(\s*ga\s*,\s*normaliser\(/.test(src)) {
+      if (!/desaccord\s*>\s*DESACCORD_MAX/.test(src)) {
+        fautes.push('projection.mjs ne contrôle plus la cohérence SPATIALE : '
+          + 'un ciel qui se déchire régulièrement passerait la dispersion, qui '
+          + 'ne compare que les instants');
+      }
+      if (!/decalage\(\s*ga\s*,\s*gbn\s*\)/.test(src) || !/normaliser\(ga,\s*gb\)/.test(src)) {
         fautes.push('projection.mjs ne remet plus les deux images à la même '
           + 'luminance avant de corréler : un ciel qui se couvre sera lu 25 % '
           + 'trop vite');
