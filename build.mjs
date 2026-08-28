@@ -609,12 +609,44 @@ async function principal() {
   // et sa longueur, qui suffit à repérer un collage tronqué ou des
   // guillemets pris dans le secret.
   // ═══════════════════════════════════════════════════════════════════════
+  //
+  // ⚠️  ET LE MESSAGE D'ABSENCE DOIT DIRE LAQUELLE DES DEUX ABSENCES C'EST.
+  //
+  // Le premier jet écrivait, pour les deux clés :
+  //
+  //     ABSENTE — le secret du dépôt ne parvient pas au script
+  //
+  // C'est une accusation, et elle était fausse pour OPEN_METEO_CLE : ce
+  // secret n'a jamais été créé dans le dépôt. La phrase a envoyé quelqu'un
+  // chercher pendant un moment une panne de transmission qui n'existait
+  // pas — alors que METEOFRANCE_CLE arrivait très bien par le même chemin,
+  // ce qui prouvait justement que le chemin marchait.
+  //
+  // Un journal qui accuse à tort coûte plus cher qu'un journal muet. Les
+  // deux clés n'ont donc plus le même message, parce qu'elles n'ont pas la
+  // même conséquence :
+  //
+  //   · OPEN_METEO_CLE absente : les prévisions marchent quand même, sur
+  //     l'offre gratuite. Ce n'est pas une panne, c'est une échéance.
+  //   · METEOFRANCE_CLE absente : la vigilance ne sort plus du tout. C'est
+  //     une panne, et elle mérite un cri.
+  // ═══════════════════════════════════════════════════════════════════════
   if (!DEMO) {
-    const dire = (nom, v) => log(v
-      ? `  clé ${nom} : présente (${v.length} caractères)`
-      : `  clé ${nom} : ABSENTE — le secret du dépôt ne parvient pas au script`);
-    dire('OPEN_METEO_CLE', CLE);
-    dire('METEOFRANCE_CLE', process.env.METEOFRANCE_CLE || '');
+    const present = (nom, v) => `  clé ${nom} : présente (${v.length} caractères)`;
+    log(CLE
+      ? present('OPEN_METEO_CLE', CLE) + ' — accès client'
+      : '  clé OPEN_METEO_CLE : absente — on interroge l’offre GRATUITE '
+        + 'd’Open-Meteo, qui interdit l’usage commercial. Les prévisions '
+        + 'fonctionnent ; à créer dans Réglages → Secrets and variables → '
+        + 'Actions avant le lancement.');
+
+    const mf = process.env.METEOFRANCE_CLE || '';
+    log(mf
+      ? present('METEOFRANCE_CLE', mf)
+      : '  clé METEOFRANCE_CLE : ABSENTE — la vigilance ne sera pas publiée. '
+        + 'Si le secret existe pourtant dans le dépôt, c’est qu’il ne parvient '
+        + 'pas au script : vérifier son nom exact et qu’il est bien un secret '
+        + 'de DÉPÔT et non d’environnement.');
   }
 
   controlerPrecision(registre, brutSpots);
