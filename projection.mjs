@@ -73,26 +73,93 @@ export const PAS = 6;
 /** Combien de paires d'images servent à mesurer le mouvement. */
 const PAIRES = 4;
 
-/** Côté de l'image réduite servant à la corrélation. */
-const GRILLE = 128;
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * ⚠️  LA MESURE ÉTAIT AVEUGLE PAR CONSTRUCTION. VOICI LE CALCUL.
+ *
+ * Réglage d'origine : grille de 128, et comparaison de deux images
+ * CONSÉCUTIVES, donc dix minutes d'écart. Ça ne pouvait pas marcher, et
+ * l'arithmétique le dit sans qu'on ait besoin d'essayer :
+ *
+ *   l'image régionale fait 1233 × 1068 pixels, à 2 km le pixel ;
+ *   réduite à 128, un pixel de grille vaut 1233/128 × 2 km ≈ 19,3 km ;
+ *   un alizé de 16,5 nœuds pousse les nuages de 30,6 km/h,
+ *   soit 5,1 km en dix minutes — c'est-à-dire 0,26 pixel de grille.
+ *
+ * La corrélation cherche des décalages ENTIERS. Zéro était donc la bonne
+ * réponse. Pour voir un seul pixel bouger il fallait 19,3 km en dix
+ * minutes, soit 116 km/h — un cyclone.
+ *
+ * ⚠️  ET CE N'ÉTAIT PAS SEULEMENT AVEUGLE : C'ÉTAIT FAUX DANS L'AUTRE SENS.
+ *
+ * Éprouvé sur des images fabriquées aux vraies dimensions, avec un
+ * déplacement connu (voir tests/20-mouvement.js) :
+ *
+ *   ciel immobile ......... 0,00 / 0,00   ✓  (vrai 0 / 0)
+ *   brise 8 nœuds ......... 0,00 / 0,00   ✗  (vrai 1,20 / 0,44)
+ *   alizé 16 nœuds ........ 0,00 / 0,00   ✗  (vrai 2,40 / 0,87)
+ *   coup de vent 35 nœuds . 9,63 / 0,00   ✗  (vrai 5,20 / 1,90)
+ *
+ * Faux dans quatre cas sur cinq. Et le dernier est le pire : par gros
+ * temps, le premier pixel qui bascule vaut 9,63 pixels d'image, donc la
+ * vitesse est SURESTIMÉE DE 85 %. La projection aurait annoncé un grain
+ * une heure trop tôt — le seul moment où quelqu'un la regarde.
+ *
+ * ⚠️  DEUX LEVIERS, ET IL FAUT LES DEUX.
+ *
+ *   1. une grille plus fine : à 512, un pixel vaut 4,8 km ;
+ *   2. un écart de temps plus long : quatre pas, soit quarante minutes,
+ *      ce qui multiplie par quatre le déplacement à mesurer.
+ *
+ * Ensemble : l'alizé de 16 nœuds déplace 4 pixels de grille sur la base,
+ * mesuré à 2,41 px d'image par pas contre 2,40 attendus. Les cinq cas
+ * passent, bruit compris. Coût mesuré : 0,9 seconde.
+ *
+ * Le prix de l'écart long est une hypothèse : que le vent ne tourne pas
+ * en quarante minutes. C'est raisonnable pour un alizé, moins pour un
+ * grain — d'où la dispersion, qui refuse quand les paires divergent.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
 
-/** Décalage maximal cherché, en pixels de la grille réduite. */
+/** Côté de l'image réduite servant à la corrélation. */
+const GRILLE = 512;
+
+/**
+ * Combien de pas séparent les deux images d'une paire.
+ *
+ * 4 pas × 10 minutes = 40 minutes de base. C'est ce qui rend le
+ * déplacement mesurable ; le résultat est ensuite divisé par ce nombre
+ * pour redevenir un déplacement PAR PAS.
+ */
+const ECART = 4;
+
+/**
+ * Décalage maximal cherché, en pixels de grille SUR LA BASE de 40 minutes.
+ *
+ * 16 pixels × 4,8 km = 77 km en quarante minutes, soit 116 km/h (62
+ * nœuds). Au-delà on ne cherche pas : ce n'est plus un régime de vent,
+ * c'est un défaut de mesure.
+ */
 const RECHERCHE = 16;
 
 /**
- * Vitesse au-delà de laquelle on considère la mesure aberrante.
+ * Déplacement au-delà duquel on refuse de conclure, sur la base.
  *
- * L'emprise régionale fait ~2 460 km de large. Sur une grille de 128, un
- * pixel vaut ~19 km. En dix minutes, 8 pixels = 154 km, soit 920 km/h :
- * au-delà, ce n'est plus un nuage, c'est un défaut de mesure.
+ * Volontairement sous `RECHERCHE` : une mesure qui touche le bord de la
+ * fenêtre de recherche n'est pas un minimum, c'est une saturation, et
+ * elle vaudrait probablement davantage si on cherchait plus loin.
+ * 14 pixels ≈ 67 km en quarante minutes, soit 101 km/h.
  */
-const DECALAGE_MAX = 8;
+const DECALAGE_MAX = 14;
 
 /**
- * Écart maximal toléré entre les paires, en pixels réduits. Au-delà, le
- * mouvement n'est pas cohérent et on ne projette pas.
+ * Écart maximal toléré entre les paires, en pixels de grille sur la base.
+ *
+ * 6 pixels ≈ 29 km de désaccord entre deux mesures du même vent. Au-delà,
+ * le mouvement n'est pas cohérent d'une paire à l'autre — vent qui tourne,
+ * nuages qui se forment sur place, image manquante — et on ne projette pas.
  */
-const DISPERSION_MAX = 4;
+const DISPERSION_MAX = 6;
 
 /** Médiane d'une liste de nombres. */
 function mediane(l) {
@@ -172,74 +239,90 @@ async function lireIndexAnim(dossier) {
  *          par pas de CADENCE minutes — ou null si on refuse de conclure.
  */
 export async function mesurerMouvement(sharp, fichiers) {
-  if (!fichiers || fichiers.length < 3) return null;
+  // Il faut ECART + 2 images pour former au moins deux paires espacées.
+  if (!fichiers || fichiers.length < ECART + 2) return null;
 
-  // Les plus récentes d'abord : le mouvement d'il y a deux heures n'a pas
-  // à peser sur une projection de l'heure qui vient.
-  const derniers = fichiers.slice(-(PAIRES + 1));
-  const gris = [];
-  for (const f of derniers) gris.push(await enGris(sharp, f));
+  // ⚠️  ON NE COMPARE PLUS DEUX IMAGES CONSÉCUTIVES.
+  //
+  // Chaque paire est faite d'images séparées de ECART pas — quarante
+  // minutes — parce qu'en dix minutes le déplacement est plus petit qu'un
+  // pixel de grille et que la corrélation ne cherche que des entiers. Voir
+  // le calcul en tête de fichier : c'est ce qui a rendu la projection
+  // muette depuis le premier jour.
+  //
+  // Les paires les plus récentes d'abord : le mouvement d'il y a deux
+  // heures n'a pas à peser sur une projection de l'heure qui vient.
+  const n = fichiers.length;
+  const paires = [];
+  for (let i = n - 1; i - ECART >= 0 && paires.length < PAIRES; i--) {
+    paires.push([fichiers[i - ECART], fichiers[i]]);
+  }
+  if (paires.length < 2) return null;
+
+  // Les images sont lues une seule fois chacune, même quand deux paires
+  // les partagent : à 512 × 512, chaque lecture coûte un décodage JPEG.
+  const cache = new Map();
+  const gris = async (f) => {
+    if (!cache.has(f)) cache.set(f, await enGris(sharp, f));
+    return cache.get(f);
+  };
 
   const dxs = [], dys = [];
-  for (let i = 1; i < gris.length; i++) {
-    const d = decalage(gris[i - 1], gris[i]);
+  for (const [avant, apres] of paires) {
+    const d = decalage(await gris(avant), await gris(apres));
     dxs.push(d.dx);
     dys.push(d.dy);
   }
 
-  const dx = mediane(dxs);
-  const dy = mediane(dys);
+  // Tout ce qui suit est en pixels de grille SUR LA BASE de ECART pas.
+  const dxBase = mediane(dxs);
+  const dyBase = mediane(dys);
 
-  // ⚠️  Deux refus, et ils comptent autant que le calcul lui-même.
+  // ⚠️  Trois refus, et ils comptent autant que le calcul lui-même.
   const dispersion = Math.max(
     Math.max(...dxs) - Math.min(...dxs),
     Math.max(...dys) - Math.min(...dys)
   );
   if (dispersion > DISPERSION_MAX) {
-    return { refus: 'mouvement incohérent d’une image à l’autre', dispersion, dxs, dys };
+    return { refus: 'mouvement incohérent d’une paire à l’autre', dispersion, dxs, dys };
   }
-  if (Math.abs(dx) > DECALAGE_MAX || Math.abs(dy) > DECALAGE_MAX) {
-    return { refus: 'déplacement aberrant', dx, dy };
+  if (Math.abs(dxBase) > DECALAGE_MAX || Math.abs(dyBase) > DECALAGE_MAX) {
+    return { refus: 'déplacement aberrant', dx: dxBase, dy: dyBase };
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // ⚠️  TROISIÈME REFUS : UN DÉPLACEMENT EXACTEMENT NUL N'EST PAS UNE
-  //     MESURE, C'EST UN SILENCE.
+  // ⚠️  UN DÉPLACEMENT EXACTEMENT NUL N'EST PAS UNE MESURE, C'EST UN
+  //     SILENCE — ET AVEC LA GRILLE CORRIGÉE, C'EN EST UN VRAI.
   //
-  // Le 28 août, premier passage où la projection a enfin tourné, la mesure
-  // a rendu dx = 0, dy = 0, dispersion = 0 — sur CINQ paires d'images
-  // consécutives.
+  // Avec l'ancien réglage, zéro était la réponse normale par tout temps :
+  // ce refus aurait tout bloqué. Maintenant qu'un pixel de grille vaut
+  // 4,8 km sur quarante minutes, un zéro franc signifie moins de 2,4 km
+  // parcourus en quarante minutes, soit moins de 4 km/h. C'est un calme
+  // plat, et c'est alors légitime de ne rien projeter.
   //
-  // Ce n'est pas un ciel immobile. Le vent était de 16,5 nœuds, soit
-  // 30,6 km/h ; l'image régionale fait 2 km par pixel ; en dix minutes un
-  // nuage parcourt donc 5,1 km, c'est-à-dire 2,5 pixels. Le seuil de refus
-  // est à 8. Un déplacement de deux à trois pixels est exactement ce que ce
-  // calcul est censé voir, et il a vu zéro cinq fois de suite.
-  //
-  // Une vraie mesure bruite : cinq paires donnant toutes exactement le même
-  // entier, et cet entier valant zéro, c'est la signature d'une corrélation
-  // qui ne trouve rien — pas d'une atmosphère au repos.
-  //
-  // Et la conséquence à l'écran est ce qui rend le refus obligatoire : avec
-  // un déplacement nul, les six images « projetées » sont des COPIES de la
-  // dernière image observée. On publierait donc une photo du passé sous un
-  // bandeau « PROJECTION · +60 min · image calculée ». C'est très
-  // exactement ce que le point 8 du cahier des charges interdit — une
-  // projection qui n'en est pas une — et c'est pire que pas de projection
-  // du tout, parce que ça se regarde comme une prévision.
-  //
-  // On refuse donc, et l'écran affiche « pas de projection », ce qu'il sait
-  // déjà faire. À rouvrir quand on aura compris pourquoi la corrélation lit
-  // zéro : c'est elle le vrai défaut, ce refus n'est qu'un garde-fou.
+  // Ce qu'on refuse d'abord, c'est de publier six copies de la dernière
+  // image observée sous un bandeau « PROJECTION · +60 min ». Une photo du
+  // passé présentée comme une prévision est exactement ce que le point 8
+  // du cahier des charges interdit, et l'écran sait déjà dire « pas de
+  // projection ».
   // ═══════════════════════════════════════════════════════════════════════
-  if (dx === 0 && dy === 0 && dispersion === 0) {
+  if (dxBase === 0 && dyBase === 0 && dispersion === 0) {
     return {
-      refus: 'déplacement nul sur toutes les paires — mesure muette, pas ciel immobile',
-      dx, dy, dispersion, dxs, dys
+      refus: 'déplacement nul sur toutes les paires — ciel sans mouvement décelable',
+      dx: 0, dy: 0, dispersion, dxs, dys
     };
   }
 
-  return { dx, dy, dispersion, dxs, dys, images: derniers.length };
+  // On redivise par l'écart : le reste du code attend un déplacement PAR
+  // PAS de dix minutes. Il reste fractionnaire — c'est là que se gagne la
+  // précision, et l'arrondi n'a lieu qu'au moment de décaler l'image.
+  return {
+    dx: dxBase / ECART,
+    dy: dyBase / ECART,
+    dxBase, dyBase, ecart: ECART,
+    dispersion, dxs, dys,
+    images: cache.size
+  };
 }
 
 /**
