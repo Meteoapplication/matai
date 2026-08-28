@@ -94,19 +94,39 @@ name: Prévisions Mata'i
 #
 # CE QU'ON FAIT, ET COMMENT ON LE JUGERA.
 #
-# Quatre créneaux par heure au lieu d'un. Si les tirages sont seulement un
-# peu indépendants, quatre chances à 23 % valent mieux qu'une. Si GitHub
-# pénalise vraiment les cadences rapprochées, on le verra — et cette fois
-# sur un échantillon qui vaut quelque chose.
+# ⚠️  L'EXPÉRIENCE A ÉTÉ FAITE, ET ELLE A DONNÉ TORT À CELUI QUI L'A LANCÉE.
 #
-#   À VÉRIFIER dans quelques jours, sur l'onglet Actions filtré par
-#   `event:schedule` : compter les passages programmés et les diviser par
-#   le nombre d'heures écoulées. Au-dessus de 23 %, on garde. En dessous,
-#   on revient à un seul créneau et on note le résultat ICI.
+# Le 28 août au matin, quatre créneaux par heure ont remplacé le créneau
+# unique, avec ce raisonnement : « si les tirages sont un peu indépendants,
+# quatre chances à 23 % valent mieux qu'une ». Et cette consigne, écrite
+# ici même : au-dessus de 23 %, on garde ; en dessous, on revient en
+# arrière et on note le résultat.
 #
-# Le dépôt est public : les minutes d'Actions y sont gratuites et sans
-# quota. Quatre créneaux ne coûtent donc rien, et `concurrency` plus bas
-# empêche deux passages de se marcher dessus.
+# Relevé le 28 août à 21 h 35 UTC, quinze heures et vingt minutes après le
+# changement, sur l'onglet Actions filtré par `event:schedule` :
+#
+#     créneaux offerts à GitHub ......... environ 60
+#     passages programmés déclenchés .... 0
+#
+# ZÉRO SUR SOIXANTE. Le dernier passage programmé de l'histoire du dépôt
+# date du 28 août à 01 h 30 UTC, avant le changement. Avec un seul créneau
+# horaire, le taux était de 23 % — mauvais, mais pas nul.
+#
+# Le changement n'a donc pas amélioré la situation : IL L'A SUPPRIMÉE.
+#
+# ⚠️  ET IL FAUT RENDRE JUSTICE À LA NOTE QU'ON AVAIT ÉCARTÉE.
+#
+# Ce fichier portait une observation ancienne — `*/20` et `5,25,45` n'ont
+# rien déclenché — qui concluait que GitHub sacrifie les cadences
+# rapprochées. Elle a été rejetée le 28 août comme statistiquement faible :
+# trois créneaux ratés à 23 % de réussite arrivent une fois sur deux par
+# hasard. Le calcul était juste. La conclusion tirée du calcul ne l'était
+# pas : « cette mesure ne prouve rien » a été lu comme « cette mesure est
+# fausse ». Ce sont deux choses différentes, et l'expérience à soixante
+# tirages a tranché dans le sens de la note d'origine.
+#
+# On revient donc à un seul créneau par heure, qui est le seul réglage dont
+# on ait la preuve qu'il déclenche quelque chose sur CE dépôt.
 #
 # ⚠️  CE N'EST PAS UNE SOLUTION, C'EST UN PANSEMENT. Aucun réglage de cron
 # ne rend fiable un planificateur « au mieux ». Le seul vrai remède est un
@@ -121,10 +141,10 @@ name: Prévisions Mata'i
 # ═════════════════════════════════════════════════════════════════════
 on:
   schedule:
+    # ⚠️  UN SEUL. Voir l'en-tête : quatre créneaux ont donné 0 déclenchement
+    # sur 60 en quinze heures, contre 23 % pour celui-ci. Ne pas « améliorer »
+    # cette ligne sans refaire la mesure et l'écrire au-dessus.
     - cron: '0 * * * *'
-    - cron: '15 * * * *'
-    - cron: '30 * * * *'
-    - cron: '45 * * * *'
   workflow_dispatch:
 
 permissions:
