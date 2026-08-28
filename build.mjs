@@ -667,6 +667,12 @@ async function principal() {
           if (d.eclairement !== undefined) {
             bouts.push(`éclairement ${Math.round(d.eclairement * 100)} % (seuil 15 %)`);
           }
+          if (d.desaccord !== undefined) {
+            bouts.push(`désaccord entre tuiles ${d.desaccord} (seuil 4)`);
+          }
+          if (d.tuiles) {
+            bouts.push('tuiles ' + d.tuiles.map((t) => `(${t.dx},${t.dy})`).join(' '));
+          }
           log(`    mesures par paire : ${bouts.join(' · ')}`);
         }
       } else {

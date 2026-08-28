@@ -297,6 +297,113 @@ export function normaliser(ref, autre) {
   return sortie;
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * ⚠️  LE DÉFAUT LE PLUS PROFOND N'EST PAS DANS LA MESURE : IL EST DANS LE
+ *     MODÈLE. « TOUT LE CIEL SE DÉPLACE ENSEMBLE » EST FAUX.
+ *
+ * Toute cette machinerie repose sur une idée : mesurer UN déplacement, et
+ * translater TOUTE l'image de ce déplacement-là. L'emprise régionale fait
+ * 2 464 km sur 2 133 km. C'est la distance de Paris à Moscou.
+ *
+ * Mesuré le 28 août 2026 sur les images infrarouges réelles, en découpant
+ * la région en seize tuiles et en cherchant le déplacement de chacune sur
+ * une même paire de quarante minutes :
+ *
+ *     (-1,1)  (-2,3)  (0,4)  (-1,4)
+ *     (2,0)   (0,0)   (3,3)  (-2,1)
+ *     (0,0)   (0,0)   (0,0)  (0,0)
+ *     (-1,-3) (3,-2)  (2,-1) (4,1)
+ *
+ * De −2 à +4 en x, de −3 à +4 en y. À 6 km le pixel, les tuiles sont en
+ * désaccord de TRENTE-SIX KILOMÈTRES sur quarante minutes. Il n'existe
+ * aucune translation unique qui décrive ce ciel : le nord-est descend, le
+ * sud-ouest monte, le centre ne bouge pas.
+ *
+ * C'est normal, et c'était prévisible : la région traverse la zone de
+ * convergence, la ceinture des alizés et vingt et un degrés de latitude.
+ * Rien n'oblige un nuage des Marquises à faire ce que fait un nuage des
+ * Australes.
+ *
+ * ⚠️  ET LA DISPERSION EXISTANTE NE VOIT PAS ÇA.
+ *
+ * `DISPERSION_MAX` compare les paires entre elles — c'est-à-dire dans le
+ * TEMPS. Un ciel qui se déchire régulièrement, la moitié nord partant à
+ * l'ouest et la moitié sud à l'est, donne quatre paires parfaitement
+ * d'accord sur une moyenne qui ne décrit aucun endroit réel. La mesure
+ * serait stable, cohérente, et fausse partout.
+ *
+ * D'où ce contrôle : on mesure aussi la cohérence dans l'ESPACE, et on
+ * refuse quand les tuiles ne racontent pas la même histoire. Une
+ * projection absente est lisible ; une projection qui déplace les
+ * Marquises comme les Australes ne l'est pas.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * @returns les déplacements de chaque tuile, en pixels de grille.
+ */
+export function decalageParTuiles(a, b, taille = GRILLE, cotes = 3, recherche = 8) {
+  const tw = Math.floor(taille / cotes);
+  const out = [];
+  for (let ty = 0; ty < cotes; ty++) {
+    for (let tx = 0; tx < cotes; tx++) {
+      const x0 = tx * tw, y0 = ty * tw;
+      let meilleur = { dx: 0, dy: 0, cout: Infinity };
+      for (let dy = -recherche; dy <= recherche; dy++) {
+        for (let dx = -recherche; dx <= recherche; dx++) {
+          let somme = 0, n = 0;
+          for (let y = y0; y < y0 + tw; y += 2) {
+            const yy = y + dy;
+            if (yy < 0 || yy >= taille) continue;
+            for (let x = x0; x < x0 + tw; x += 2) {
+              const xx = x + dx;
+              if (xx < 0 || xx >= taille) continue;
+              somme += Math.abs(a[y * taille + x] - b[yy * taille + xx]);
+              n++;
+            }
+          }
+          // Une tuile trop rognée par le décalage ne se compare plus à
+          // grand-chose : on ne la laisse pas gagner par manque de pixels.
+          if (n < (tw * tw) / 6) continue;
+          const cout = somme / n;
+          if (cout < meilleur.cout) meilleur = { dx, dy, cout };
+        }
+      }
+      out.push({ dx: meilleur.dx, dy: meilleur.dy });
+    }
+  }
+  return out;
+}
+
+/**
+ * De combien les tuiles se contredisent-elles, en pixels de grille ?
+ *
+ * On prend l'étendue (max − min) sur chaque axe et on garde la pire. Pas
+ * l'écart-type : une seule tuile qui part de travers suffit à rendre la
+ * translation fausse là où elle est, et c'est précisément l'endroit où
+ * quelqu'un habite.
+ */
+export function desaccordSpatial(tuiles) {
+  if (!tuiles || tuiles.length < 4) return 0;
+  const dxs = tuiles.map((t) => t.dx), dys = tuiles.map((t) => t.dy);
+  return Math.max(
+    Math.max(...dxs) - Math.min(...dxs),
+    Math.max(...dys) - Math.min(...dys)
+  );
+}
+
+/**
+ * Désaccord maximal toléré entre les tuiles, en pixels de grille.
+ *
+ * 4 pixels × 4,8 km = 19 km d'écart entre deux coins de la région sur une
+ * base de quarante minutes. Au-delà, les morceaux du ciel ne vont pas au
+ * même endroit et une translation unique en déplacerait au moins un dans
+ * la mauvaise direction.
+ *
+ * Repère mesuré : un champ uniforme donne 0 ou 1 ; le vrai ciel du
+ * 28 août donnait 6.
+ */
+const DESACCORD_MAX = 4;
+
 /** Lit une image et la réduit en niveaux de gris bruts. */
 async function enGris(sharp, chemin, taille = GRILLE) {
   const buf = await sharp(chemin)
@@ -363,6 +470,7 @@ export async function mesurerMouvement(sharp, fichiers) {
 
   const dxs = [], dys = [];
   let pireEclairement = 0;
+  let tuiles = null;
   for (const [avant, apres] of paires) {
     const ga = await gris(avant), gb = await gris(apres);
 
@@ -372,9 +480,15 @@ export async function mesurerMouvement(sharp, fichiers) {
 
     // ⚠️  On compare à luminance égale, sinon un ciel qui se couvre fait
     // lire le vent 25 % trop fort. Voir `normaliser`.
-    const d = decalage(ga, normaliser(ga, gb));
+    const gbn = normaliser(ga, gb);
+    const d = decalage(ga, gbn);
     dxs.push(d.dx);
     dys.push(d.dy);
+
+    // La cohérence spatiale se juge sur la paire la PLUS RÉCENTE — c'est
+    // celle dont on va prolonger le mouvement. Une seule suffit : le
+    // découpage en tuiles coûte autant que la mesure globale.
+    if (tuiles === null) tuiles = decalageParTuiles(ga, gbn);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -432,6 +546,22 @@ export async function mesurerMouvement(sharp, fichiers) {
   if (dispersion > DISPERSION_MAX) {
     return { refus: 'mouvement incohérent d’une paire à l’autre', dispersion, dxs, dys };
   }
+
+  // ⚠️  ET LA COHÉRENCE DANS L'ESPACE, qui est un contrôle DIFFÉRENT de
+  // celui du dessus. Voir le long commentaire de `decalageParTuiles` : la
+  // dispersion compare les instants, celle-ci compare les endroits. Un
+  // ciel qui se déchire proprement passe la première et échoue ici.
+  const desaccord = desaccordSpatial(tuiles);
+  if (desaccord > DESACCORD_MAX) {
+    return {
+      refus: 'le ciel ne se déplace pas d’un seul bloc — les morceaux de la '
+        + 'région vont dans des directions différentes, aucune translation '
+        + 'unique ne les décrit',
+      desaccord,
+      tuiles,
+      dispersion, dxs, dys
+    };
+  }
   if (Math.abs(dxBase) > DECALAGE_MAX || Math.abs(dyBase) > DECALAGE_MAX) {
     return { refus: 'déplacement aberrant', dx: dxBase, dy: dyBase };
   }
@@ -467,6 +597,7 @@ export async function mesurerMouvement(sharp, fichiers) {
     dy: dyBase / ECART,
     dxBase, dyBase, ecart: ECART,
     dispersion, dxs, dys,
+    desaccord: desaccordSpatial(tuiles),
     images: cache.size
   };
 }
