@@ -1,21 +1,39 @@
 name: Prévisions Mata'i
 
 # ═══════════════════════════════════════════════════════════════════════
-# DEUX RYTHMES DANS UN SEUL FLUX
+# ⚠️  UN SEUL RYTHME, ET UN PASSAGE COMPLET À CHAQUE FOIS.
 #
-# Les prévisions et les nuages n'ont pas la même durée de vie.
+# CE FLUX A LAISSÉ LE SITE FIGÉ TRENTE HEURES, AU VERT.
 #
-#   Les prévisions viennent de modèles qui ne sortent que deux à quatre
-#   fois par jour. Les recalculer sans arrêt ne les rendrait pas plus
-#   justes — ça brûlerait du quota pour rien. Une fois par heure suffit.
+# Il portait autrefois deux rythmes dans un seul flux : passage toutes les
+# vingt minutes, complet au premier de l'heure, nuages seulement aux deux
+# autres. Le partage se faisait sur la minute :
 #
-#   Les nuages, eux, sont une photo. GOES-18 en prend une toutes les dix
-#   minutes. Une photo d'il y a une heure ne sert à rien à quelqu'un qui
-#   décide s'il sort maintenant.
+#     if [ … ] || [ "$(date -u +%M)" -lt 20 ]; then node build.mjs
+#     else                                          node animation.mjs
 #
-# Donc : le flux passe toutes les vingt minutes. Au premier passage de
-# l'heure il refait tout ; aux deux autres il ne va chercher que les
-# images du satellite. Un déclenchement manuel refait toujours tout.
+# Le 26 août, la cadence `*/20` a été abandonnée — GitHub ne la déclenchait
+# jamais — et le flux est revenu à `0 * * * *`. Mais la condition sur la
+# minute, elle, est restée. Or GitHub n'est pas ponctuel : le passage
+# programmé du 28 août à 00 h 00 UTC s'est déclenché à 00 h 31.
+#
+# Trente et une minutes, donc « pas moins de vingt », donc :
+#
+#     — passage court : nuages seulement —
+#
+# Les images du satellite se sont rafraîchies, les prévisions non. Le site
+# a servi le paquet du 26 août pendant deux jours, avec une coche verte à
+# chaque passage et pas un message d'erreur. Relevé dans le journal du
+# passage #28, ligne 13.
+#
+# La condition attendait une cadence qui n'existe plus, et transformait le
+# retard de GitHub — chose ordinaire, documentée plus bas — en panne
+# silencieuse. C'est la pire forme : rien n'échoue, donc rien n'alerte.
+#
+# Avec un seul passage par heure, il n'y a plus de choix à faire :
+# `build.mjs` fait tout, y compris les nuages, l'animation et la
+# projection. `animation.mjs` reste utilisable à la main pour ne
+# rafraîchir que les images.
 # ═══════════════════════════════════════════════════════════════════════
 #
 # GitHub n'est pas ponctuel à la minute : un passage peut décaler de dix à
@@ -64,6 +82,25 @@ concurrency:
 jobs:
   previsions:
     runs-on: ubuntu-latest
+
+    # ═════════════════════════════════════════════════════════════════════
+    # ⚠️  UN PASSAGE QUI SE BLOQUE BLOQUE TOUS LES SUIVANTS.
+    #
+    # `cancel-in-progress: false` juste au-dessus est volontaire — deux
+    # publications simultanées s'écraseraient l'une l'autre. Mais la
+    # conséquence, elle, ne l'était pas : un passage qui reste pendu met les
+    # passages horaires suivants EN FILE derrière lui, et GitHub finit par
+    # les abandonner. Un seul téléchargement qui ne rend jamais la main peut
+    # donc arrêter la publication pour la journée entière.
+    #
+    # Sans limite ici, le plafond est celui de GitHub : six heures. Six
+    # passages horaires perdus pour une image de satellite.
+    #
+    # Le passage complet prend deux à quatre minutes. Vingt-cinq laissent
+    # toute la marge nécessaire à un jour lent et coupent net un jour pendu.
+    # ═════════════════════════════════════════════════════════════════════
+    timeout-minutes: 25
+
     steps:
       - uses: actions/checkout@v4
 
@@ -73,6 +110,21 @@ jobs:
 
       - name: Installer les dépendances
         run: npm install --no-audit --no-fund
+
+      # ─────────────────────────────────────────────────────────────────
+      # Le banc d'essai passe AVANT la fabrication, pas après.
+      #
+      # Publier puis découvrir que c'était faux ne sert à rien : les paquets
+      # sont déjà en ligne et les téléphones les ont déjà pris. Une faute ici
+      # arrête la publication et laisse en place ceux de l'heure précédente,
+      # qui sont vieux d'une heure — bien moins grave que faux.
+      #
+      # Ce dépôt ne contient que le backend : les tests qui ont besoin des
+      # sources de l'application se déclarent « sautés » et n'échouent pas.
+      # Le jour où les deux vivront ensemble, ils s'allumeront tout seuls.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Vérifier
+        run: npm test
 
       # ─────────────────────────────────────────────────────────────────
       # On récupère ce qui est déjà en ligne AVANT de fabriquer.
@@ -96,14 +148,12 @@ jobs:
         env:
           OPEN_METEO_CLE: ${{ secrets.OPEN_METEO_CLE }}
           METEOFRANCE_CLE: ${{ secrets.METEOFRANCE_CLE }}
+        # ⚠️  PAS DE CONDITION ICI. Voir l'en-tête : celle qui s'y trouvait
+        # a fait tourner le flux au vert pendant trente heures sans jamais
+        # refaire une prévision. Un passage par heure, complet, point.
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(date -u +%M)" -lt 20 ]; then
-            echo "── passage complet : prévisions + nuages ──"
-            node build.mjs
-          else
-            echo "── passage court : nuages seulement ──"
-            node animation.mjs
-          fi
+          echo "── passage complet : prévisions, nuages, animation, projection ──"
+          node build.mjs
 
       # ─────────────────────────────────────────────────────────────────
       # Publication sur une branche à commit unique.
