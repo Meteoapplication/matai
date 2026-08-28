@@ -50,8 +50,14 @@ function champ(n = 90, graine = 1) {
   }));
 }
 
-/** Rend le champ décalé de (dx, dy) pixels, avec un peu de bruit optionnel. */
-function rendre(sharp, amas, dx, dy, bruit, graine) {
+/**
+ * Rend le champ décalé de (dx, dy) pixels, avec un peu de bruit optionnel.
+ *
+ * `eclairement`, s'il est fourni, est une fonction (x) → facteur entre 0 et
+ * 1 appliquée à la fin : elle sert à fabriquer une nuit qui traverse
+ * l'image, ou une journée qui se couvre uniformément.
+ */
+function rendre(sharp, amas, dx, dy, bruit, graine, eclairement) {
   let s = graine;
   const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
   const px = Buffer.alloc(L * H, 30);            // fond sombre : la mer
@@ -71,6 +77,14 @@ function rendre(sharp, amas, dx, dy, bruit, graine) {
   if (bruit) {
     for (let i = 0; i < px.length; i += 3) {
       px[i] = Math.max(0, Math.min(255, px[i] + (rnd() - 0.5) * bruit));
+    }
+  }
+  if (eclairement) {
+    // Une colonne à la fois : le facteur ne dépend que de x.
+    for (let x = 0; x < L; x++) {
+      const f = eclairement(x);
+      if (f >= 0.999) continue;
+      for (let y = 0; y < H; y++) px[y * L + x] = Math.round(px[y * L + x] * f);
     }
   }
   return sharp(px, { raw: { width: L, height: H, channels: 1 } })
@@ -117,6 +131,7 @@ module.exports = async function () {
 
   try {
     const amas = champ();
+    let etalon = null;
 
     for (const r of REGIMES) {
       // Neuf images : de quoi former quatre paires espacées de quatre pas.
@@ -165,9 +180,165 @@ module.exports = async function () {
           + r.vy + ' — écart de ' + Math.abs(vuY - r.vy).toFixed(2));
       }
 
+      // On garde la lecture de l'alizé à luminance stable : c'est l'étalon
+      // auquel les ciels qui s'assombrissent seront comparés plus bas.
+      if (r.nom === 'alizé 16 nœuds') { etalon = { x: vuX, y: vuY }; }
+
       const kmh = Math.hypot(vuX, vuY) * KM_PAR_PIXEL * 6;
       notes.push(r.nom + ' → ' + vuX.toFixed(2) + ' / ' + vuY.toFixed(2)
         + ' px/pas (vrai ' + r.vx + ' / ' + r.vy + ') ≈ ' + kmh.toFixed(0) + ' km/h');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ⚠️  LA NUIT QUI TRAVERSE L'IMAGE DOIT ÊTRE REFUSÉE.
+    //
+    // C'est le défaut qui a fait échouer le premier passage où la mesure
+    // corrigée a tourné en production, le 28 août 2026 :
+    //
+    //     dx [-16, -15, -16, -3] · dy [-10, -10, -8, -3] · dispersion 13
+    //
+    // −16 est exactement la limite de recherche : la corrélation saturait.
+    // Elle ne suivait pas les nuages, elle suivait le terminateur — la
+    // frontière jour/nuit, qui balaie le Pacifique à 1 600 km/h, cinquante
+    // fois la vitesse d'un alizé, et qui est de très loin le bord le plus
+    // contrasté de la scène.
+    //
+    // Ce qui suit reproduit exactement ça : le MÊME alizé que ci-dessus,
+    // avec en plus une nuit qui entre par l'est. Si le refus disparaît un
+    // jour, la projection recommencera à déplacer tout le ciel de cent
+    // kilomètres vers l'ouest, deux fois par jour, sous un bandeau
+    // « PROJECTION ». Le refus par dispersion ne suffit PAS à rattraper le
+    // coup : il dépend de l'endroit où la nuit se trouve dans le cadre, et
+    // la 4ᵉ paire ci-dessus (−3) montre qu'il peut très bien ne pas
+    // se déclencher.
+    // ═══════════════════════════════════════════════════════════════════
+    {
+      const chemins = [];
+      for (let i = 0; i < 9; i++) {
+        // Le front de nuit part de l'est (x grand) et balaie vers l'ouest.
+        const xt = L * (1.15 - i * 0.14);
+        const nuit = (x) => (x < xt ? 1 : 0.06);
+        const f = path.join(dossier, 'terminateur-' + i + '.jpg');
+        await writeFile(f, await rendre(sharp, amas, i * 2.40, i * 0.87, 0, 7 + i, nuit));
+        chemins.push(f);
+      }
+
+      const m = await P.mesurerMouvement(sharp, chemins);
+      if (!m) {
+        fautes.push('crépuscule : aucune mesure rendue sur 9 images');
+      } else if (!m.refus) {
+        fautes.push('LE CRÉPUSCULE N’EST PLUS REFUSÉ : la mesure rend '
+          + m.dx + ' / ' + m.dy + ' (paires ' + JSON.stringify(m.dxs) + ') — '
+          + 'c’est le terminateur qui est suivi, pas les nuages, et la '
+          + 'projection décalerait tout le ciel de cent kilomètres');
+      } else if (!/éclairement/.test(m.refus)) {
+        fautes.push('le crépuscule est refusé, mais pour la mauvaise raison : « '
+          + m.refus + ' ». Le motif tient à l’endroit où la nuit se trouve dans '
+          + 'le cadre ; il ne se déclenchera pas à tous les crépuscules');
+      } else {
+        notes.push('crépuscule → refusé : ' + m.refus
+          + ' (écart d’éclairement ' + m.eclairement + ')');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ── ET UNE JOURNÉE QUI SE COUVRE DOIT PASSER, SANS ÊTRE LUE TROP VITE.
+    //
+    // Le garde-fou ci-dessus vaut par ce qu'il laisse passer. Un ciel qui
+    // s'assombrit uniformément — l'arrivée d'un front, exactement le moment
+    // où la projection sert à quelque chose — ne doit pas être confondu
+    // avec la tombée de la nuit.
+    //
+    // ⚠️  ET IL NE SUFFIT PAS QU'IL PASSE : IL DOIT PASSER JUSTE.
+    //
+    // La somme des différences absolues baisse partout où la zone commune
+    // contient moins de nuage. Quand la seconde image est plus sombre, le
+    // minimum glisse donc vers un décalage plus grand que le vrai. Mesuré
+    // sur ce décor même, avant que `normaliser` n'existe :
+    //
+    //     luminance stable ..... 4 / 2  en grille   ✓ (vrai 4,0 / 1,7)
+    //     −8,7 % en 40 min ..... 5 / 2               ✗ (+25 %)
+    //     −14 % en 40 min ...... 5 / 3               ✗ (+25 % et +76 %)
+    //
+    // Vingt-cinq pour cent trop vite, dans le sens qui annonce le grain
+    // trop tôt. Deux régimes sont éprouvés ici, dont un juste sous le seuil
+    // d'éclairement : c'est là que le défaut était le plus fort et que le
+    // refus ne rattrapait rien.
+    // ═══════════════════════════════════════════════════════════════════
+    for (const [quoi, parPas] of [['−8,7 %', 0.02], ['−13,8 %', 0.032]]) {
+      const chemins = [];
+      for (let i = 0; i < 9; i++) {
+        const f = path.join(dossier, 'couvert-' + parPas + '-' + i + '.jpg');
+        const baisse = () => 1 - parPas * i;
+        await writeFile(f, await rendre(sharp, amas, i * 2.40, i * 0.87, 0, 7 + i, baisse));
+        chemins.push(f);
+      }
+
+      const m = await P.mesurerMouvement(sharp, chemins);
+      if (!m || m.refus) {
+        fautes.push('une journée qui se couvre (' + quoi + ' de luminance sur '
+          + 'quarante minutes) est refusée : « ' + ((m && m.refus) || 'aucune mesure')
+          + ' ». Le seuil d’éclairement est trop serré — la projection '
+          + 'disparaîtrait précisément quand un front arrive');
+        continue;
+      }
+
+      const vuX = m.dx * (L / 512), vuY = m.dy * (H / 512);
+
+      // ⚠️  ON COMPARE À L'ÉTALON, PAS À LA VÉRITÉ — ET AVEC UNE TOLÉRANCE
+      //     BIEN PLUS SERRÉE QUE LE RESTE DU FICHIER.
+      //
+      // Le décor est le MÊME que celui de l'alizé de 16 nœuds : mêmes amas,
+      // même déplacement, seule la luminance change. La bonne question n'est
+      // donc pas « est-ce à peu près juste ? » mais « la baisse de luminance
+      // a-t-elle changé la réponse ? ». La réponse doit être non.
+      //
+      // C'est important : avec la tolérance ordinaire de 0,75 px, ce test
+      // laissait passer le défaut. Sans remise à niveau, la lecture était de
+      // 3,01 au lieu de 2,41 — 25 % trop vite, et 0,60 px d'écart, soit
+      // juste sous la barre. Il a fallu saboter le module pour s'en
+      // apercevoir : le test « passait » en décrivant un monde faux.
+      if (!etalon) {
+        fautes.push('l’étalon (alizé à luminance stable) n’a pas été mesuré : '
+          + 'la comparaison ci-dessous ne peut pas se faire');
+        continue;
+      }
+      const SERRE = 0.25;
+      if (Math.abs(vuX - etalon.x) > SERRE || Math.abs(vuY - etalon.y) > SERRE) {
+        fautes.push('ciel qui se couvre (' + quoi + ') : ' + vuX.toFixed(2) + ' / '
+          + vuY.toFixed(2) + ' px/pas, contre ' + etalon.x.toFixed(2) + ' / '
+          + etalon.y.toFixed(2) + ' pour le MÊME ciel à luminance stable. La '
+          + 'baisse de luminance déplace le minimum de corrélation : le vent '
+          + 'est lu ' + (vuX > etalon.x ? 'TROP FORT' : 'trop faible')
+          + ', et la projection annoncerait le grain '
+          + (vuX > etalon.x ? 'trop tôt' : 'trop tard'));
+      } else {
+        notes.push('ciel qui se couvre (' + quoi + ') → passe, ' + vuX.toFixed(2)
+          + ' / ' + vuY.toFixed(2) + ' px/pas — identique au ciel stable');
+      }
+    }
+
+    // Et la remise à niveau doit être appliquée DANS le module.
+    {
+      const src = fs.readFileSync(path.resolve(__dirname, '..', 'projection.mjs'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      if (!/decalage\(\s*ga\s*,\s*normaliser\(/.test(src)) {
+        fautes.push('projection.mjs ne remet plus les deux images à la même '
+          + 'luminance avant de corréler : un ciel qui se couvre sera lu 25 % '
+          + 'trop vite');
+      }
+    }
+
+    // Et le garde-fou doit être DANS le module, pas seulement ici.
+    {
+      const src = fs.readFileSync(path.resolve(__dirname, '..', 'projection.mjs'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      if (!/pireEclairement\s*>\s*ECLAIREMENT_MAX/.test(src)) {
+        fautes.push('projection.mjs ne refuse plus sur l’éclairement : à l’aube '
+          + 'et au crépuscule la corrélation suivra de nouveau le terminateur');
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════
