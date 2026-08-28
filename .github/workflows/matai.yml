@@ -41,33 +41,90 @@ name: Prévisions Mata'i
 # de chaque image, jamais une fraîcheur supposée.
 #
 # ═════════════════════════════════════════════════════════════════════
-# CE QU'ON A MESURÉ LE 26 AOÛT, ET POURQUOI ON EST REVENU À UNE HEURE
+# ⚠️  LE PLANIFICATEUR DE GITHUB NE TIENT PAS L'HEURE. RELEVÉ COMPLET.
 #
-# Objectif de départ : rafraîchir les nuages toutes les vingt minutes.
-# Deux tentatives, deux échecs, mesurés et pas supposés :
+# Ce bloc disait, jusqu'au 28 août :
 #
-#   `*/20 * * * *`          → 0 déclenchement en 1 h 20
-#   `5,25,45 * * * *`       → 0 déclenchement en 1 h 00 (3 créneaux ratés)
-#   `0 * * * *`  (l'ancien) → 10 déclenchements d'affilée, aucun raté
+#     `0 * * * *` (l'ancien) → 10 déclenchements d'affilée, aucun raté
 #
-# Le planificateur de GitHub est « au mieux » et sacrifie les cadences
-# rapprochées quand la charge monte. Plutôt que de laisser un réglage
-# ambitieux qui ne publie jamais rien, on remet celui qui a fait ses
-# preuves sur CE dépôt.
+# C'ÉTAIT FAUX, et la faute était de méthode : on avait compté DIX
+# passages sans regarder l'heure de chacun. Ils s'étalaient en réalité sur
+# quinze heures. Voici la liste entière des passages PROGRAMMÉS depuis la
+# mise en service, relevée le 28 août sur l'onglet Actions :
 #
-# Conséquence assumée : l'image la plus fraîche a entre 15 et 75 minutes.
-# C'est six fois mieux que les outils qui sortent toutes les 6 heures,
-# et trois fois moins bien que ce qu'on visait.
+#     25/08  08:08  10:06  11:59  14:28  17:04  19:20  20:59  21:56
+#            23:00  23:53
+#     26/08  05:53  08:10  10:54  12:01  16:37
+#     27/08  — aucun —
+#     28/08  01:30
 #
-# Pour descendre vraiment à vingt minutes, il faut un minuteur fiable
-# hors de GitHub (Cloudflare Workers en fait un par minute, gratuitement)
-# qui appelle ce flux par workflow_dispatch. Cela demande un compte
-# Cloudflare et un jeton GitHub : c'est une décision de Gabin, pas une
-# décision technique.
+# Seize passages programmés en 65 heures. Soixante-cinq étaient attendus.
+#
+#     TAUX DE DÉCLENCHEMENT RÉEL : 23 %.
+#
+# Et les trous ne sont pas répartis : 6 h le 25 au soir, 4 h 36 le 26, et
+# surtout DE 16 h 37 LE 26 À 01 h 30 LE 28 — trente-deux heures et
+# cinquante-trois minutes sans un seul passage programmé.
+#
+# ⚠️  C'EST LA SECONDE MOITIÉ DE L'HISTOIRE DU SITE FIGÉ.
+#
+# L'en-tête de ce fichier explique qu'une condition sur la minute
+# transformait les passages en retard en passages « nuages seulement ».
+# C'était vrai, et c'était un vrai défaut. Mais cela n'explique que les
+# passages qui ONT EU LIEU. Pendant ces trente-trois heures, le
+# planificateur n'a rien déclenché du tout. Les deux fautes se sont
+# additionnées : ce qui tournait ne fabriquait que des nuages, et presque
+# rien ne tournait.
+#
+# Corriger la condition ne rend donc pas le site fiable. Il faut le dire
+# ici, sinon la prochaine personne — moi compris — croira le problème
+# réglé.
+#
+# ⚠️  ET LA MESURE QUI CONDAMNAIT LES CADENCES RAPPROCHÉES NE PROUVAIT RIEN.
+#
+# On avait écrit :
+#
+#     `*/20 * * * *`    → 0 déclenchement en 1 h 20
+#     `5,25,45 * * * *` → 0 déclenchement en 1 h 00 (3 créneaux ratés)
+#
+# et conclu que GitHub « sacrifie les cadences rapprochées ». Trois
+# créneaux ratés, avec un taux de réussite de 23 %, arrivent une fois sur
+# deux par pur hasard (0,77³ = 46 %). Cette mesure était compatible avec
+# l'absence totale d'effet : elle ne démontrait rien.
+#
+# CE QU'ON FAIT, ET COMMENT ON LE JUGERA.
+#
+# Quatre créneaux par heure au lieu d'un. Si les tirages sont seulement un
+# peu indépendants, quatre chances à 23 % valent mieux qu'une. Si GitHub
+# pénalise vraiment les cadences rapprochées, on le verra — et cette fois
+# sur un échantillon qui vaut quelque chose.
+#
+#   À VÉRIFIER dans quelques jours, sur l'onglet Actions filtré par
+#   `event:schedule` : compter les passages programmés et les diviser par
+#   le nombre d'heures écoulées. Au-dessus de 23 %, on garde. En dessous,
+#   on revient à un seul créneau et on note le résultat ICI.
+#
+# Le dépôt est public : les minutes d'Actions y sont gratuites et sans
+# quota. Quatre créneaux ne coûtent donc rien, et `concurrency` plus bas
+# empêche deux passages de se marcher dessus.
+#
+# ⚠️  CE N'EST PAS UNE SOLUTION, C'EST UN PANSEMENT. Aucun réglage de cron
+# ne rend fiable un planificateur « au mieux ». Le seul vrai remède est un
+# minuteur hors de GitHub (un Cloudflare Worker en fait un par minute,
+# gratuitement) qui appelle ce flux par `workflow_dispatch`. Cela demande
+# un compte Cloudflare et un jeton GitHub : c'est une décision de Gabin,
+# pas une décision technique.
+#
+# En attendant, l'application affiche l'âge RÉEL de chaque donnée. Un
+# paquet de six heures s'annonce comme tel. C'est la seule chose qui ne
+# dépende pas de GitHub.
 # ═════════════════════════════════════════════════════════════════════
 on:
   schedule:
     - cron: '0 * * * *'
+    - cron: '15 * * * *'
+    - cron: '30 * * * *'
+    - cron: '45 * * * *'
   workflow_dispatch:
 
 permissions:
