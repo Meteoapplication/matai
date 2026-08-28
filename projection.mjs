@@ -161,6 +161,17 @@ const DECALAGE_MAX = 14;
  */
 const DISPERSION_MAX = 6;
 
+/**
+ * Variation relative de luminance moyenne au-delà de laquelle on considère
+ * que c'est l'ÉCLAIREMENT qui change, et non le ciel.
+ *
+ * Relevé au crépuscule du 28 août : la moyenne passe de 104,6 à 75,0 en
+ * quarante minutes, soit 28 %. En plein jour elle ne bouge que de quelques
+ * pour cent. 15 % laisse passer une journée qui se couvre et arrête net
+ * l'arrivée de la nuit.
+ */
+const ECLAIREMENT_MAX = 0.15;
+
 /** Médiane d'une liste de nombres. */
 function mediane(l) {
   const t = [...l].sort((a, b) => a - b);
@@ -201,6 +212,66 @@ export function decalage(a, b, taille = GRILLE, recherche = RECHERCHE) {
     }
   }
   return meilleur;
+}
+
+/**
+ * De combien la luminance moyenne a-t-elle changé entre deux images ?
+ *
+ * Rapportée à la plus claire des deux, pour que la mesure soit symétrique
+ * et qu'une image presque noire ne fasse pas exploser le rapport.
+ */
+export function ecartEclairement(a, b) {
+  const moyenne = (t) => {
+    let s = 0;
+    for (let i = 0; i < t.length; i += 7) s += t[i];
+    return s / Math.ceil(t.length / 7);
+  };
+  const ma = moyenne(a), mb = moyenne(b);
+  const haut = Math.max(ma, mb);
+  if (haut <= 0) return 0;
+  return Math.abs(ma - mb) / haut;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * ⚠️  UNE JOURNÉE QUI S'ASSOMBRIT FAIT LIRE LE VENT TROP FORT.
+ *
+ * La corrélation minimise une somme de différences absolues. Si la seconde
+ * image est globalement plus sombre que la première, la somme baisse
+ * partout où la zone commune contient MOINS de nuage — et le minimum
+ * glisse vers un décalage plus grand que le vrai. Mesuré sur des images
+ * fabriquées, alizé de 16 nœuds, vrai déplacement 4,0 / 1,7 en grille :
+ *
+ *     luminance stable ....  4 / 2   ✓
+ *     −8,7 % en 40 min .....  5 / 2   ✗  (+25 % de vitesse)
+ *     −14 % en 40 min ......  5 / 3   ✗  (+25 % et +76 %)
+ *
+ * Ce n'est pas le crépuscule — le garde-fou d'éclairement arrête celui-là.
+ * C'est le ciel qui se couvre : exactement le moment où quelqu'un regarde
+ * la projection, et exactement le sens d'erreur qui fait annoncer un grain
+ * trop tôt.
+ *
+ * On remet donc les deux images à la même luminance moyenne avant de
+ * comparer. Les trois cas rendent alors 4 / 2.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * @returns une COPIE de `autre` ramenée à la luminance moyenne de `ref`.
+ */
+export function normaliser(ref, autre) {
+  const moyenne = (t) => {
+    let s = 0;
+    for (let i = 0; i < t.length; i += 7) s += t[i];
+    return s / Math.ceil(t.length / 7);
+  };
+  const ma = moyenne(ref), mb = moyenne(autre);
+  if (!(mb > 0) || !(ma > 0)) return autre;
+  const k = ma / mb;
+  if (Math.abs(k - 1) < 0.01) return autre;   // rien à corriger
+  const sortie = Buffer.allocUnsafe(autre.length);
+  for (let i = 0; i < autre.length; i++) {
+    sortie[i] = Math.min(255, Math.round(autre[i] * k));
+  }
+  return sortie;
 }
 
 /** Lit une image et la réduit en niveaux de gris bruts. */
@@ -268,10 +339,62 @@ export async function mesurerMouvement(sharp, fichiers) {
   };
 
   const dxs = [], dys = [];
+  let pireEclairement = 0;
   for (const [avant, apres] of paires) {
-    const d = decalage(await gris(avant), await gris(apres));
+    const ga = await gris(avant), gb = await gris(apres);
+
+    // ⚠️  L'ÉCLAIREMENT D'ABORD : SI LA NUIT ARRIVE, RIEN D'AUTRE NE COMPTE.
+    const ecart = ecartEclairement(ga, gb);
+    if (ecart > pireEclairement) pireEclairement = ecart;
+
+    // ⚠️  On compare à luminance égale, sinon un ciel qui se couvre fait
+    // lire le vent 25 % trop fort. Voir `normaliser`.
+    const d = decalage(ga, normaliser(ga, gb));
     dxs.push(d.dx);
     dys.push(d.dy);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ⚠️  À L'AUBE ET AU CRÉPUSCULE, LA CORRÉLATION SUIT LE TERMINATEUR,
+  //     PAS LES NUAGES.
+  //
+  // Relevé le 28 août 2026 sur les images réellement publiées, luminance
+  // moyenne par bandes verticales, d'ouest en est :
+  //
+  //     01 h 50 UTC   119 116 122 105  92 102  95  85
+  //     02 h 30 UTC   124 120 123 100  56  39  22  16
+  //     03 h 00 UTC   126 101  68  33  13  15  19  19
+  //
+  // C'est la nuit qui traverse l'image. La frontière jour/nuit balaie le
+  // Pacifique à environ 1 600 km/h — cinquante fois la vitesse d'un alizé
+  // — et c'est de très loin le bord le plus contrasté de la scène. Une
+  // corrélation qui cherche « ce qui s'est déplacé » trouve donc l'ombre,
+  // et rien d'autre.
+  //
+  // La mesure de ce passage-là le montre sans ambiguïté :
+  //
+  //     dx [-16, -15, -16, -3] · dy [-10, -10, -8, -3] · dispersion 13
+  //
+  // Le −16 est EXACTEMENT la limite de recherche : la mesure sature. Elle
+  // rend « au moins 116 km/h vers l'ouest » quand le vent est de 16 nœuds.
+  // C'est la bonne réponse à la mauvaise question.
+  //
+  // On ne peut pas corriger ça par un réglage : sur une image en lumière
+  // visible, aux heures où le soleil se lève ou se couche, il n'y a pas de
+  // mouvement de nuage mesurable sous celui de l'ombre. Le vrai remède est
+  // l'infrarouge, qui ne connaît pas de terminateur — c'est un changement
+  // de source d'images, et de ce que les gens verront à l'écran.
+  //
+  // En attendant, on refuse, et on le dit. Un refus expliqué vaut mieux
+  // qu'une projection qui déplace tout le ciel de cent kilomètres.
+  // ═══════════════════════════════════════════════════════════════════════
+  if (pireEclairement > ECLAIREMENT_MAX) {
+    return {
+      refus: 'éclairement en train de changer (aube ou crépuscule) — '
+        + 'la corrélation suivrait la frontière jour/nuit et non les nuages',
+      eclairement: Math.round(pireEclairement * 100) / 100,
+      dxs, dys
+    };
   }
 
   // Tout ce qui suit est en pixels de grille SUR LA BASE de ECART pas.
