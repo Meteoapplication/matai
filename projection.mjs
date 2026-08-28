@@ -202,6 +202,43 @@ export async function mesurerMouvement(sharp, fichiers) {
     return { refus: 'déplacement aberrant', dx, dy };
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ⚠️  TROISIÈME REFUS : UN DÉPLACEMENT EXACTEMENT NUL N'EST PAS UNE
+  //     MESURE, C'EST UN SILENCE.
+  //
+  // Le 28 août, premier passage où la projection a enfin tourné, la mesure
+  // a rendu dx = 0, dy = 0, dispersion = 0 — sur CINQ paires d'images
+  // consécutives.
+  //
+  // Ce n'est pas un ciel immobile. Le vent était de 16,5 nœuds, soit
+  // 30,6 km/h ; l'image régionale fait 2 km par pixel ; en dix minutes un
+  // nuage parcourt donc 5,1 km, c'est-à-dire 2,5 pixels. Le seuil de refus
+  // est à 8. Un déplacement de deux à trois pixels est exactement ce que ce
+  // calcul est censé voir, et il a vu zéro cinq fois de suite.
+  //
+  // Une vraie mesure bruite : cinq paires donnant toutes exactement le même
+  // entier, et cet entier valant zéro, c'est la signature d'une corrélation
+  // qui ne trouve rien — pas d'une atmosphère au repos.
+  //
+  // Et la conséquence à l'écran est ce qui rend le refus obligatoire : avec
+  // un déplacement nul, les six images « projetées » sont des COPIES de la
+  // dernière image observée. On publierait donc une photo du passé sous un
+  // bandeau « PROJECTION · +60 min · image calculée ». C'est très
+  // exactement ce que le point 8 du cahier des charges interdit — une
+  // projection qui n'en est pas une — et c'est pire que pas de projection
+  // du tout, parce que ça se regarde comme une prévision.
+  //
+  // On refuse donc, et l'écran affiche « pas de projection », ce qu'il sait
+  // déjà faire. À rouvrir quand on aura compris pourquoi la corrélation lit
+  // zéro : c'est elle le vrai défaut, ce refus n'est qu'un garde-fou.
+  // ═══════════════════════════════════════════════════════════════════════
+  if (dx === 0 && dy === 0 && dispersion === 0) {
+    return {
+      refus: 'déplacement nul sur toutes les paires — mesure muette, pas ciel immobile',
+      dx, dy, dispersion, dxs, dys
+    };
+  }
+
   return { dx, dy, dispersion, dxs, dys, images: derniers.length };
 }
 
