@@ -14,7 +14,7 @@
  *                            une houle exploitable, et n'écrit rien
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyser } from './seuils.mjs';
@@ -715,6 +715,87 @@ async function principal() {
       }
     } catch (e) {
       log(`  projection : étape abandonnée — ${(e && e.message) || e}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ⚠️  LA MESURE PAR ÎLE. ELLE NE PUBLIE RIEN — ENCORE.
+    //
+    // Le modèle régional est faux à son échelle : les seize tuiles de
+    // l'emprise s'écartaient de trente-six kilomètres le 28 août. La même
+    // méthode dans une fenêtre de mille kilomètres autour d'une île tient,
+    // et c'est la question que les gens se posent : « ce grain, il arrive
+    // sur moi ? »
+    //
+    // On MESURE et on écrit dans le journal. Rien n'est servi à
+    // l'application. C'est délibéré : ce projet a déjà publié une
+    // fonctionnalité dont personne n'avait regardé les chiffres en
+    // production — la projection régionale, jamais sortie une seule fois
+    // sans que rien ne l'annonce. On inverse l'ordre. Quelques passages
+    // diront si les îles s'accordent vraiment, et lesquelles.
+    //
+    // Un échec ici ne doit RIEN casser : c'est une mesure d'observation.
+    // ═══════════════════════════════════════════════════════════════════
+    try {
+      const { mesurerToutesLesIles, direMesures } = await import('./parile.mjs');
+      const { default: sharpMod } = await import('sharp');
+      const anim = JSON.parse(await readFile(
+        join(SORTIE, 'nuages', 'anim', 'index.json'), 'utf8'));
+      const noms = (anim.images || [])
+        .map((x) => String(x.fichier || x.horodatage || x).split(/[\\/]/).pop())
+        .map((n) => (n.endsWith('.jpg') ? n : n + '.jpg'))
+        .sort();
+
+      // On mesure sur le canal infrarouge s'il est complet, comme la
+      // projection — sinon on ne mesure pas du tout : un canal à moitié
+      // rempli donnerait des chiffres qu'on ne saurait pas interpréter.
+      const dossierIr = join(SORTIE, 'nuages', 'anim-ir');
+      const chemins = noms.map((n) => join(dossierIr, n));
+      const complet = (await Promise.all(chemins.map(
+        (c) => access(c).then(() => true).catch(() => false)))).every(Boolean);
+
+      if (!complet) {
+        log('  par île : pas encore assez d’images infrarouges pour mesurer');
+      } else if (noms.length < 6) {
+        log('  par île : trop peu d’images');
+      } else {
+        // `registre` est le fichier entier ; les îles sont sous `iles`, et
+        // la position se prend sur le premier point de mesure de l'île —
+        // une île n'a pas de latitude à sa racine.
+        const iles = (registre.iles || [])
+          .filter((r) => r.spots && r.spots.length)
+          .map((r) => ({
+            id: r.id, nom: r.nom, ...positionDansImage(nuages.region, r.spots[0])
+          }))
+          .filter((x) => typeof x.x === 'number');
+
+        // ⚠️  LES DIMENSIONS SE LISENT SUR L'IMAGE, ELLES NE SE DEVINENT PAS.
+        //
+        // L'index de l'animation porte 1233 × 1068 : c'est le recadrage
+        // VISIBLE, pris sur un disque de 5424. Les images infrarouges sont
+        // prises sur un disque de 1808 et font 412 × 357. Passer les
+        // dimensions de l'index aurait demandé à sharp un découpage hors
+        // cadre — et le try/catch autour aurait avalé l'erreur en écrivant
+        // une ligne que personne ne lit. C'est exactement la panne
+        // silencieuse qui a rendu la projection régionale muette pendant
+        // toute son existence.
+        //
+        // L'échelle se déduit du rapport : les deux recadrages couvrent la
+        // même portion de globe, donc le rapport des largeurs est celui des
+        // kilomètres par pixel. Si la taille de l'infrarouge change un
+        // jour, ce calcul suit tout seul.
+        const metaIr = await sharpMod(chemins[chemins.length - 1]).metadata();
+        const kmParPixel = (anim.largeur * (anim.kilometresParPixel || 2)) / metaIr.width;
+
+        const m = await mesurerToutesLesIles(sharpMod, chemins, iles, {
+          largeur: metaIr.width, hauteur: metaIr.height,
+          kmParPixel, cadence: anim.cadence || 10
+        });
+        const bons = m.filter((x) => !x.refus).length;
+        log(`  par île : ${bons}/${m.length} île(s) mesurées (journal seulement, rien n’est publié)`);
+        for (const ligne of direMesures(m)) log(ligne);
+      }
+    } catch (e) {
+      log(`  par île : mesure abandonnée — ${(e && e.message) || e}`);
     }
   }
 
