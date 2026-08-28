@@ -165,10 +165,33 @@ const DISPERSION_MAX = 6;
  * Variation relative de luminance moyenne au-delà de laquelle on considère
  * que c'est l'ÉCLAIREMENT qui change, et non le ciel.
  *
- * Relevé au crépuscule du 28 août : la moyenne passe de 104,6 à 75,0 en
- * quarante minutes, soit 28 %. En plein jour elle ne bouge que de quelques
- * pour cent. 15 % laisse passer une journée qui se couvre et arrête net
- * l'arrivée de la nuit.
+ * ⚠️  CE SEUIL N'EST PAS CHOISI AU JUGÉ. Voici la mesure.
+ *
+ * Luminance moyenne des ONZE IMAGES RÉELLEMENT PUBLIÉES le 28 août 2026,
+ * relevée sur le site à la tombée de la nuit :
+ *
+ *     02 h 10  90,1      03 h 10  38,8
+ *     02 h 20  82,1      03 h 20  29,7
+ *     02 h 30  74,1      03 h 30  23,1
+ *     02 h 40  66,2      03 h 40  19,4
+ *     02 h 50  57,5      03 h 50  18,1
+ *     03 h 00  48,3
+ *
+ * Soit, sur les paires de quarante minutes que la mesure utilise :
+ *
+ *     02:10→02:50  36 %      02:50→03:30  60 %
+ *     02:20→03:00  41 %      03:00→03:40  60 %
+ *     02:30→03:10  48 %      03:10→03:50  53 %
+ *     02:40→03:20  55 %
+ *
+ * Trente-six pour cent au minimum, soixante au pire. En plein jour la
+ * moyenne ne bouge que de quelques pour cent, et un ciel qui se couvre
+ * franchement en donne moins de quinze (éprouvé dans tests/20-mouvement.js
+ * à 8,7 % et 13,8 %, tous deux acceptés).
+ *
+ * 15 % tombe donc dans un fossé large : plus du double de ce qu'un front
+ * produit, moins de la moitié de ce que produit le plus doux des
+ * crépuscules. Ce n'est pas un réglage serré qu'il faudra retoucher.
  */
 const ECLAIREMENT_MAX = 0.15;
 
