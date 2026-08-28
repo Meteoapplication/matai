@@ -645,10 +645,23 @@ async function principal() {
     // nuages/projection/, jamais nuages/anim/. Voir projection.mjs.
     try {
       const pr = await produireProjection(SORTIE);
-      log(pr.erreur
-        ? `  projection : rien publié — ${pr.erreur}`
-        : `  projection : ${pr.images.length} image(s), déplacement `
+      if (pr.erreur) {
+        log(`  projection : rien publié — ${pr.erreur}`);
+        // ⚠️  ET LES CHIFFRES QUI ONT MOTIVÉ LE REFUS.
+        //
+        // Le verdict seul ne sert à rien : « mouvement incohérent » ne dit
+        // ni de combien, ni sur quelle paire. Sans ces nombres, régler un
+        // seuil revient à deviner, et on ne règle pas au jugé un calcul qui
+        // décide de ce qu'on montre comme une prévision.
+        const d = pr.detail;
+        if (d && (d.dxs || d.dispersion !== undefined)) {
+          log(`    mesures par paire : dx ${JSON.stringify(d.dxs)} `
+            + `· dy ${JSON.stringify(d.dys)} · dispersion ${d.dispersion}`);
+        }
+      } else {
+        log(`  projection : ${pr.images.length} image(s), déplacement `
           + `${pr.mouvement.dxPixels}/${pr.mouvement.dyPixels} px par pas`);
+      }
     } catch (e) {
       log(`  projection : étape abandonnée — ${(e && e.message) || e}`);
     }
