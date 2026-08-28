@@ -67,7 +67,45 @@ const SOURCE = 'Météo-France Polynésie française';
 
 /** Les routes dédiées à la Polynésie, relevées sur la page de l'API. */
 const BASE = 'https://public-api.meteofrance.fr/public/DPVigilance/v1';
-const CARTE = `${BASE}/polynesie/cartevigilance/encours`;
+
+/**
+ * ⚠️  « polynésie » OU « polynesie » — ON NE PARIE PAS, ON ESSAIE LES DEUX.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * Ce chemin était écrit `polynesie`, sans accent, d'après les documents
+ * envoyés par Météo-France. Le 28 août, la page de l'API sur le portail
+ * l'affiche avec un accent :
+ *
+ *     OBTENIR  /polynésie /cartevigilance /encours
+ *
+ * Une lettre d'écart, et l'appel répond 404. La vigilance resterait donc
+ * grise sur tous les écrans AVEC une clé valide, et le message dirait « le
+ * portail a répondu HTTP 404 » — juste, mais on chercherait la faute du
+ * côté de la clé, qui vient d'être posée, plutôt que du côté d'un accent.
+ *
+ * Impossible de trancher sans clé, et deviner serait exactement ce que ce
+ * fichier s'interdit ailleurs. On essaie donc les deux graphies, dans
+ * l'ordre où le portail les présente, et on garde la première qui répond.
+ * `fetch` encode l'accent en `%C3%A9` tout seul.
+ *
+ * ⚠️  TRANCHÉ LE 28 AOÛT : C'EST LA GRAPHIE SANS ACCENT.
+ *
+ * Gabin a lancé l'appel depuis le portail lui-même, avec sa clé. Le
+ * portail AFFICHE le chemin accentué dans son sommaire, et ENVOIE :
+ *
+ *     https://public-api.meteofrance.fr/public/DPVigilance/v1
+ *       /polynesie/cartevigilance/encours          → HTTP 200
+ *
+ * L'accent n'est donc qu'un habillage de leur documentation. On met la
+ * graphie confirmée en premier ; l'autre reste derrière, sans coût — elle
+ * ne part que si la première échoue en 404, c'est-à-dire le jour où ils
+ * changeraient d'avis.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+const CHEMINS = [
+  `${BASE}/polynesie/cartevigilance/encours`,
+  `${BASE}/polynésie/cartevigilance/encours`
+];
 
 /**
  * Les niveaux, tels que le descriptif outre-mer les définit pour la
@@ -92,10 +130,41 @@ const NIVEAUX = {
 };
 
 /** Les quatre phénomènes suivis en Polynésie. */
+/**
+ * ⚠️  LE NUMÉRO 9 MANQUAIT, ET C'EST CELUI DE LA HOULE.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * Cette table venait du descriptif outre-mer. Le premier appel réel, le
+ * 28 août, a montré autre chose : le flux polynésien ne porte JAMAIS le
+ * numéro 11, et porte partout le numéro 9. Chaque zone principale liste
+ * exactement quatre phénomènes — 1, 2, 3 et 9 — et c'est le 9 qui était
+ * orange sur Rapa ce jour-là.
+ *
+ * Sans lui, l'écran aurait écrit « phénomène 9 orange » sur la ligne la
+ * plus importante de l'application.
+ *
+ * COMMENT LE 9 A ÉTÉ IDENTIFIÉ — trois indices qui concordent, et aucun
+ * n'est une supposition isolée :
+ *
+ *   1. le flux liste quatre phénomènes par zone ; trois sont connus (vent,
+ *      fortes pluies, orages) ; le quatrième est donc le marin, seul
+ *      manquant des quatre que Météo-France suit en Polynésie ;
+ *   2. la numérotation de Météo-France attribue le 9 aux vagues-submersion ;
+ *   3. le jour de cet appel, la presse polynésienne et les communiqués du
+ *      haut-commissariat plaçaient Rapa en vigilance orange
+ *      VAGUE-SUBMERSION — exactement la zone et le niveau que le flux
+ *      donne au phénomène 9.
+ *
+ * Ce n'est pas une confirmation de Météo-France. À leur demander, et à
+ * corriger ici si leur réponse diffère. Le 11 est conservé : s'il arrivait
+ * un jour, mieux vaut un nom qu'un numéro.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
 const PHENOMENES = {
   1: 'vent',
   2: 'fortes pluies',
   3: 'orages',
+  9: 'vagues-submersion',
   11: 'fortes houles'
 };
 
@@ -187,7 +256,14 @@ export function inconnu(raison) {
  */
 export function zonePour(ile) {
   const id = ile && (ile.id || ile.ile);
-  if (id && PAR_ILE[id]) return PAR_ILE[id];
+  // `PAR_ILE[id]` seul suffisait tant que `id` vient de spots.json. Mais la
+  // même forme a produit une vraie faute côté application (voir
+  // BandeauVigilance.js) : tout objet hérite de `toString`, donc
+  // `PAR_ILE['toString']` est une fonction, donc vrai — et on aurait rendu
+  // une « zone » sans champ `zone`, dans le fichier qui décide d'une
+  // alerte de sécurité. On demande si la clé est là, pas si la lecture
+  // rend quelque chose de vrai.
+  if (id && Object.prototype.hasOwnProperty.call(PAR_ILE, id)) return PAR_ILE[id];
 
   // Île inconnue du registre : le domaine global reste juste.
   return { zone: 'VIGI987', precise: false };
@@ -203,30 +279,58 @@ export async function recuperer(ile) {
   }
 
   const z = zonePour(ile);
+  const ennuis = [];
 
-  try {
-    const r = await fetch(CARTE, {
-      headers: { apikey: CLE, Accept: 'application/json' },
-      signal: AbortSignal.timeout(15000)
-    });
+  for (const url of CHEMINS) {
+    let r;
+    try {
+      r = await fetch(url, {
+        headers: { apikey: CLE, Accept: 'application/json' },
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (e) {
+      ennuis.push(`échec réseau : ${(e && e.message) || e}`);
+      continue;
+    }
 
+    // 404 : ce n'est pas la bonne graphie du chemin, on essaie l'autre.
+    // Tout autre code d'erreur porte sur la clé ou sur le service, et
+    // réessayer une seconde adresse n'y changerait rien — on s'arrête et on
+    // le dit, plutôt que de brouiller le diagnostic.
+    if (r.status === 404) {
+      ennuis.push('404 sur ' + chemin(url));
+      continue;
+    }
     if (!r.ok) {
       return inconnu(`le portail a répondu HTTP ${r.status}`);
     }
 
-    const brut = await r.json();
-    const lu = interpreter(brut, z);
+    let brut;
+    try {
+      brut = await r.json();
+    } catch (e) {
+      return inconnu('réponse illisible : ' + ((e && e.message) || e));
+    }
 
+    const lu = interpreter(brut, z);
     if (!lu) {
       // Le portail a répondu, mais pas dans une forme qu'on sait lire.
       // C'est exactement le cas où il ne faut surtout pas deviner.
       return inconnu('réponse reçue mais zone introuvable dans le fichier');
     }
 
-    return lu;
-  } catch (e) {
-    return inconnu(`échec réseau : ${(e && e.message) || e}`);
+    // On garde la trace de l'adresse qui a marché : c'est elle qui tranche
+    // la question de l'accent, et le journal du passage la montrera.
+    return { ...lu, chemin: chemin(url) };
   }
+
+  return inconnu(ennuis.join(' ; ') || 'aucune adresse n’a répondu');
+}
+
+/** La fin d'une URL, pour le journal — sans le nom d'hôte ni la clé. */
+function chemin(url) {
+  const i = url.indexOf('/DPVigilance');
+  return i === -1 ? url : url.slice(i);
 }
 
 /**
@@ -264,20 +368,71 @@ export function interpreter(brut, z) {
     }
     if (!trouve) return null;
 
-    const niveau = Number(trouve.max_color_id);
+    // ═══════════════════════════════════════════════════════════════════
+    // ⚠️  UNE ZONE PEUT AVOIR DES SOUS-ZONES, ET ELLES COMPTENT.
+    //
+    // Le premier appel réel a montré treize domaines que la documentation
+    // ne mentionnait nulle part : VIGI987-14-50 à -63, tous rattachés aux
+    // Îles du Vent, et tous ne portant QUE le phénomène 9
+    // (vagues-submersion). Ce sont selon toute apparence des secteurs
+    // côtiers — la submersion dépend de l'orientation du rivage, pas le
+    // vent ni la pluie, qui restent à l'échelle de l'archipel.
+    //
+    // Le jour du relevé, la zone mère et ses treize secteurs étaient tous
+    // au vert : impossible d'en déduire si la mère agrège ses secteurs ou
+    // si elle les ignore. Or les deux cas ne se valent pas du tout — si
+    // elle les ignore, un secteur de Tahiti passé en orange submersion
+    // n'apparaîtrait NULLE PART dans l'application.
+    //
+    // On prend donc le maximum de la zone et de ses sous-zones. Ce n'est
+    // pas une supposition : `VIGI987-14-57` est par construction une
+    // subdivision de `VIGI987-14`, son alerte est donc une alerte des Îles
+    // du Vent. Si la mère agrège déjà, ce calcul ne change rien ; si elle
+    // n'agrège pas, il évite un silence sur une alerte de submersion.
+    //
+    // Et l'écart va toujours dans le même sens : ça peut monter le niveau,
+    // jamais le descendre.
+    // ═══════════════════════════════════════════════════════════════════
+    const prefixe = String(zoneId).toUpperCase() + '-';
+    const sousZones = domaines.filter(
+      (d) => String(d && d.domain_id).toUpperCase().startsWith(prefixe)
+    );
+
+    const niveau = Math.max(
+      Number(trouve.max_color_id) || 0,
+      ...sousZones.map((d) => Number(d.max_color_id) || 0)
+    );
     const etat = NIVEAUX[niveau];
     if (!etat) return null;
 
     // On ne retient que les phénomènes réellement en alerte : au niveau 1
     // tout est vert et les lister n'apprendrait rien.
-    const phenomenes = Array.isArray(trouve.phenomenon_items)
-      ? trouve.phenomenon_items
-          .filter((p) => Number(p && p.phenomenon_max_color_id) > 1)
-          .map((p) => ({
-            nom: PHENOMENES[Number(p.phenomenon_id)] || `phénomène ${p.phenomenon_id}`,
-            etat: NIVEAUX[Number(p.phenomenon_max_color_id)] || 'inconnu'
-          }))
-      : [];
+    //
+    // Les phénomènes suivent la même règle que le niveau : on prend le pire
+    // de la zone et de ses sous-zones. Sans ça, l'écran pourrait afficher
+    // « ORANGE » sans pouvoir dire de quoi — le niveau viendrait d'un
+    // secteur côtier et la liste des phénomènes, elle, resterait celle de
+    // la zone mère, donc vide.
+    const pire = new Map();
+    for (const d of [trouve, ...sousZones]) {
+      for (const p of (Array.isArray(d.phenomenon_items) ? d.phenomenon_items : [])) {
+        const id = Number(p && p.phenomenon_id);
+        const n = Number(p && p.phenomenon_max_color_id);
+        if (!isFinite(id) || !(n > 1)) continue;
+        if (!pire.has(id) || n > pire.get(id)) pire.set(id, n);
+      }
+    }
+
+    const nommerPhenomene = (id) =>
+      (Object.prototype.hasOwnProperty.call(PHENOMENES, id)
+        ? PHENOMENES[id] : `phénomène ${id}`);
+
+    const phenomenes = [...pire.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .map(([id, n]) => ({
+        nom: nommerPhenomene(id),
+        etat: NIVEAUX[n] || 'inconnu'
+      }));
 
     return {
       etat,
@@ -288,6 +443,9 @@ export function interpreter(brut, z) {
       // signale : une alerte trop large reste vraie, mais l'utilisateur
       // doit savoir qu'elle n'est pas taillée pour son lagon.
       precise,
+      // Quelles zones nommées portent réellement l'alerte, quand on affiche
+      // celle de tout le territoire. Voir `zonesEnAlerte` plus bas.
+      causes: precise === false ? zonesEnAlerte(domaines) : null,
       phenomenes,
       maj: produit.update_time || produit.begin_validity_time || null,
       source: SOURCE,
@@ -297,4 +455,81 @@ export function interpreter(brut, z) {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * QUELLES ZONES PORTENT VRAIMENT L'ALERTE.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * ⚠️  « MOINS PRÉCIS » ET « ALARMISTE » NE SONT PAS LA MÊME CHOSE.
+ *
+ * Trois îles — Rangiroa, Fakarava, Tubuai — n'ont pas de zone connue et
+ * retombent sur le domaine `VIGI987`, qui couvre toute la Polynésie. On
+ * l'avait écrit comme un pis-aller acceptable : « moins précis, mais jamais
+ * faux ».
+ *
+ * Le premier appel réel, le 28 août 2026, a montré ce que ça donne. Le
+ * domaine global n'est pas une moyenne : c'est le MAXIMUM du territoire. Ce
+ * jour-là il valait orange, à cause de Rapa seule — à mille cinq cents
+ * kilomètres des Tuamotu, de l'autre côté du Pacifique sud. Un pêcheur de
+ * Rangiroa ouvrait donc l'application par temps calme et lisait
+ * « VIGILANCE ORANGE · vagues-submersion ».
+ *
+ * C'est exactement la faute que l'associé nous avait demandé d'éviter : une
+ * alerte qui ne correspond pas à ce que les gens voient dehors. Elle ne se
+ * paie pas une fois — après deux ou trois oranges pour rien, plus personne
+ * ne regarde le bandeau, y compris le jour où il est juste. Une alerte
+ * qu'on n'écoute plus ne protège personne.
+ *
+ * Le flux donne les trente zones une par une. On peut donc afficher le
+ * niveau ET dire d'où il vient : « orange sur Rapa uniquement ». Le
+ * pêcheur voit l'alerte, et voit qu'elle n'est pas chez lui. Rien n'est
+ * caché, rien n'est exagéré.
+ *
+ * ⚠️  ON NE FAIT PAS DIRE AU SILENCE QUE ÇA NE NOUS CONCERNE PAS.
+ *
+ * Cette liste ne prouve pas que l'île est hors de danger : sa zone reste
+ * inconnue, et elle est peut-être l'une de celles qui sont nommées. C'est
+ * un élément de jugement rendu à l'utilisateur, pas un feu vert donné à sa
+ * place. Le texte de l'écran doit rester dans ce registre.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * @returns [{ zoneId, zone, etat }] — les zones nommées au-dessus du vert,
+ *          sans le domaine global, la plus grave d'abord.
+ */
+export function zonesEnAlerte(domaines) {
+  if (!Array.isArray(domaines)) return [];
+
+  const parNom = new Map();
+
+  for (const d of domaines) {
+    const id = d && d.domain_id ? String(d.domain_id) : null;
+    if (!id || id === 'VIGI987') continue;      // le global n'explique rien
+
+    const niveau = Number(d.max_color_id);
+    if (!(niveau > 1)) continue;                // vert, ou illisible
+
+    const etat = NIVEAUX[niveau];
+    if (!etat) continue;
+
+    // Les treize sous-zones des Îles du Vent (VIGI987-14-50 à -63) n'ont pas
+    // de nom à elles dans la table. On les rattache à leur zone mère plutôt
+    // que d'afficher un identifiant brut à quelqu'un qui décide s'il sort.
+    const nom = nommerZone(id);
+    const vu = parNom.get(nom);
+    if (!vu || niveau > vu.niveau) parNom.set(nom, { zoneId: id, zone: nom, etat, niveau });
+  }
+
+  return [...parNom.values()]
+    .sort((a, b) => b.niveau - a.niveau || a.zone.localeCompare(b.zone))
+    .map(({ zoneId, zone, etat }) => ({ zoneId, zone, etat }));
+}
+
+/** Le nom d'une zone, ou celui de sa zone mère pour une sous-zone. */
+function nommerZone(id) {
+  const dans = (k) => Object.prototype.hasOwnProperty.call(ZONES, k);
+  if (dans(id)) return ZONES[id];
+  const mere = id.replace(/-\d+$/, '');
+  if (mere !== id && dans(mere)) return ZONES[mere];
+  return id;
 }
