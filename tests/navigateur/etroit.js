@@ -22,6 +22,28 @@
  *
  * 320 px n'est pas une hypothèse : c'est le plancher Android, et la Polynésie
  * n'achète pas que des téléphones neufs.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * ⚠️  CE QU'IL NE REGARDE PAS : L'AGRANDISSEMENT DE POLICE.
+ *
+ * Ce fichier fait varier la LARGEUR de l'écran, et rien d'autre. Le
+ * navigateur tourne toujours à taille de police normale.
+ *
+ * Le 29 août 2026, sur un vrai téléphone, « MESURES » s'est coupé en
+ * « MESURE » / « S », le S venant chevaucher « ACCUEIL » — sur toutes les
+ * pages, en permanence. Ce fichier n'a rien vu, et ne POUVAIT rien voir :
+ * la cause était le réglage d'accessibilité du système, qui multiplie
+ * toutes les tailles de texte par 1,15, 1,3, parfois 2.
+ *
+ * Le pire n'est pas qu'il soit passé à côté. C'est qu'il donnait
+ * l'impression que la barre d'onglets était éprouvée. Un essai qui couvre
+ * un axe et laisse croire qu'il les couvre tous est plus dangereux que pas
+ * d'essai du tout.
+ *
+ * Cet axe-là est désormais mesuré par `tests/29-barre-onglets.js`, qui
+ * calcule la largeur du texte à partir des largeurs réelles des lettres.
+ * Si un jour ce fichier-ci sait piloter la taille de police du navigateur,
+ * les deux pourront fusionner.
  * ═══════════════════════════════════════════════════════════════════════
  *
  * ⚠️  Comme ses voisins, il ne tourne pas dans « npm test ». Voir LISEZ-MOI.md.
