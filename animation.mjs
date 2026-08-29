@@ -30,10 +30,12 @@
  *   node animation.mjs --etat    dit seulement ce qu'il y a en réserve
  */
 
-import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, unlink, access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { urlDatee, urlBande, BANDE_INFRAROUGE, telecharger, recadrerRegion } from './nuages.mjs';
+import { urlDatee, urlBande, BANDE_INFRAROUGE, telecharger, recadrerRegion,
+         CENTRE_REGION } from './nuages.mjs';
+import { hauteurSoleil } from './soleil.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const SORTIE = join(ICI, 'paquets');
@@ -66,6 +68,89 @@ const QUALITE = 70;
 
 /** Au-delà, on rend la main : le passage suivant finira le travail. */
 const BUDGET_MS = 5 * 60 * 1000;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * LA HAUTEUR DE SOLEIL EN DESSOUS DE LAQUELLE ON MONTRE L'INFRAROUGE.
+ *
+ * GEOCOLOR est une composition pour l'œil : elle s'éteint la nuit. Au-dessus
+ * du Pacifique, sans ville et sans lune, il ne reste presque rien. Relevé
+ * sur le recadrage régional réellement publié, le 28 août 2026, avec la
+ * hauteur du soleil au centre de l'emprise calculée pour chaque instant :
+ *
+ *     heure locale   hauteur au centre   GEOCOLOR (moyenne sur 255)
+ *      16 h 10             +18,2°               90,9
+ *      16 h 50              +9,0°               58,4
+ *      17 h 30              −0,3°               24,0     ← illisible
+ *      18 h 10              −9,7°               18,7
+ *      18 h 50             −19,2°               17,8
+ *
+ * L'image meurt entre +9° et 0°. Le seuil est posé à +5°, entre les deux
+ * points mesurés, et penche du côté de basculer un peu TÔT : une image grise
+ * et lisible vaut mieux qu'une image noire, jamais l'inverse.
+ *
+ * ⚠️  CE SEUIL EST INTERPOLÉ, PAS MESURÉ. Aucun relevé n'existe entre +9° et
+ * 0°. C'est pourquoi chaque passage écrit dans le journal la hauteur du
+ * soleil ET la luminance réelle de la dernière image : au bout de quelques
+ * nuits, on saura si +5° tombe au bon endroit, et on n'aura pas à le
+ * deviner une seconde fois.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+export const HAUTEUR_VISIBLE_MIN = 5;
+
+/**
+ * Le canal à montrer pour un instant donné : visible s'il fait jour sur
+ * l'emprise, infrarouge sinon.
+ *
+ * ⚠️  ON DÉCIDE IMAGE PAR IMAGE, PAS BOUCLE PAR BOUCLE.
+ *
+ * La boucle couvre deux heures. Autour du coucher, elle est à cheval sur la
+ * bascule. Choisir un seul canal pour toute la boucle obligerait soit à
+ * garder du visible déjà noir sur les dernières images, soit à passer en
+ * gris deux heures trop tôt. Chaque image porte donc son canal, et la
+ * bande passe du couleur au gris au moment où le ciel le fait vraiment.
+ *
+ * Les deux recadrages couvrent la même portion de globe — c'est
+ * `empriseRegion` qui les calcule tous les deux à partir de la même boîte
+ * en latitude/longitude — donc ils s'empilent sans décalage visible, à un
+ * pixel infrarouge près (six kilomètres, un tiers de pixel à l'écran).
+ */
+export function canalPourInstant(date, seuil = HAUTEUR_VISIBLE_MIN) {
+  return hauteurSoleil(date, CENTRE_REGION.lat, CENTRE_REGION.lon) >= seuil
+    ? 'visible' : 'infrarouge';
+}
+
+/**
+ * La liste d'images de l'index : pour chacune, son canal et son chemin.
+ *
+ * ⚠️  UNE IMAGE INFRAROUGE MANQUANTE NE DOIT PAS FAIRE UN TROU DANS LA BANDE.
+ *
+ * L'infrarouge est téléchargé dans un second temps et peut échouer seul — le
+ * journal de production montre déjà des « infrarouge indisponible ». Écrire
+ * son chemin sans vérifier ferait demander à l'application un fichier
+ * absent : une case vide au milieu de la boucle, ou l'animation qui
+ * s'arrête. On retombe alors sur le visible, qui sera noir mais qui EXISTE,
+ * et l'image porte `canal: 'visible'` — donc l'application n'annonce pas de
+ * l'infrarouge en montrant autre chose.
+ *
+ * @param existeIr  prédicat asynchrone : l'infrarouge de cet horodatage
+ *                  est-il réellement sur le disque. Injecté pour que la
+ *                  bascule soit éprouvable sans système de fichiers.
+ */
+export async function construireImages(horodatages, existeIr, seuil = HAUTEUR_VISIBLE_MIN) {
+  return Promise.all(horodatages.map(async (h) => {
+    const t = versDate(h);
+    let canal = canalPourInstant(t, seuil);
+    if (canal === 'infrarouge' && !(await existeIr(h))) canal = 'visible';
+    return {
+      fichier: canal === 'infrarouge'
+        ? `nuages/anim-ir/${h}.jpg`
+        : `nuages/anim/${h}.jpg`,
+      t: t.toISOString(),
+      canal
+    };
+  }));
+}
 
 // ------------------------------------------------------------ horodatage
 
@@ -246,15 +331,24 @@ export async function produireAnimation(sortie = SORTIE) {
     origine: { col: emprise.gauche, lig: emprise.haut },
     disque: emprise.disque,
     kilometresParPixel: 2,
-    source: 'NOAA GOES-18 (GOES-West) — GEOCOLOR',
+    source: 'NOAA GOES-18 (GOES-West) — GEOCOLOR le jour, bande 13 la nuit',
     genere: new Date().toISOString(),
-    images: gardees.map((h) => ({
-      fichier: `nuages/anim/${h}.jpg`,
-      t: versDate(h).toISOString()
-    }))
+    images: await construireImages(gardees, (h) =>
+      access(join(dossierIr, `${h}.jpg`)).then(() => true).catch(() => false))
   };
 
+  // De quoi vérifier, dans quelques nuits, que le seuil de +5° tombe au bon
+  // endroit — au lieu de le redeviner. Voir HAUTEUR_VISIBLE_MIN.
+  const derniereDate = versDate(gardees[gardees.length - 1]);
+  index.hauteurSoleil =
+    Math.round(hauteurSoleil(derniereDate, CENTRE_REGION.lat, CENTRE_REGION.lon) * 10) / 10;
+  index.canal = index.images.some((i) => i.canal === 'visible')
+    ? (index.images.every((i) => i.canal === 'visible') ? 'visible' : 'mixte')
+    : 'infrarouge';
+
   await writeFile(join(dossier, 'index.json'), JSON.stringify(index), 'utf8');
+  console.log(`  animation : canal ${index.canal} — soleil à ${index.hauteurSoleil}° `
+    + `au centre de l’emprise (seuil ${HAUTEUR_VISIBLE_MIN}°)`);
 
   const derniere = versDate(gardees[gardees.length - 1]);
   const age = Math.round((Date.now() - derniere.getTime()) / 60000);

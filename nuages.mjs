@@ -186,7 +186,23 @@ export function tailleFenetre(lat, lon, taille, degres) {
  * Environ 1233 × 1067 pixels, soit 2464 km sur 2133 km. Elle n'est
  * téléchargée que quand on ouvre la carte, jamais au démarrage.
  */
-const REGION = { lat: [-28.5, -7.5], lon: [-156.5, -133.5] };
+export const REGION = { lat: [-28.5, -7.5], lon: [-156.5, -133.5] };
+
+/**
+ * Le centre de l'emprise. Sert à décider si l'image est encore éclairée.
+ *
+ * ⚠️  LE CENTRE, ET PAS LE COIN LE PLUS SOMBRE. L'emprise couvre vingt-trois
+ * degrés de longitude — une heure et demie de soleil. Le terminateur est
+ * DONC à l'intérieur de l'image pendant environ trois heures, deux fois par
+ * jour : exiger que tous les coins soient éclairés basculerait l'imagerie en
+ * infrarouge en plein après-midi, alors qu'elle est encore parfaitement
+ * lisible. Mesuré le 28 août : à 16 h 10 locales, le coin le plus sombre
+ * était déjà à −5° pendant que l'image entière valait 90,9 sur 255.
+ */
+export const CENTRE_REGION = {
+  lat: (REGION.lat[0] + REGION.lat[1]) / 2,
+  lon: (REGION.lon[0] + REGION.lon[1]) / 2
+};
 
 export function empriseRegion(taille) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

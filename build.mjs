@@ -587,6 +587,114 @@ function controlerPrecision(registre, texte) {
   }
 }
 
+/**
+ * Combien de passages on garde dans le carnet de mesures par île.
+ *
+ * Une entrée pèse environ 1,2 ko pour neuf îles. Cent cinquante passages
+ * font 180 ko — à vingt minutes le passage, cela couvre un peu plus de deux
+ * jours, ce qui est la fenêtre qu'on veut : assez pour voir un régime de
+ * vent changer, assez court pour que le fichier ne devienne jamais un poids
+ * sur la branche « site ».
+ */
+const CARNET_MAX = 150;
+
+/** Nom du carnet, dans `paquets/`. */
+const CARNET_ILES = 'mesures-iles.json';
+
+/**
+ * ⚠️  UN CARNET, PAS UNE PUBLICATION.
+ *
+ * Ce fichier existe parce que les chiffres de la mesure par île ne se
+ * lisaient que dans le journal d'Actions — c'est-à-dire nulle part : le
+ * visualiseur de GitHub ne rend pas son texte, les journaux expirent, et
+ * décider si la projection par île est publiable demande de comparer des
+ * passages étalés sur plusieurs jours. Un fichier qu'on peut relire à
+ * n'importe quel moment remplace une corvée qui, en pratique, n'aurait
+ * jamais été faite.
+ *
+ * L'APPLICATION NE LE LIT PAS, et `tests/26-carnet-iles.js` le vérifie. Le
+ * jour où la mesure par île sera jugée bonne, ce qui sera servi à
+ * l'application sera écrit ailleurs, explicitement. Ne pas transformer ce
+ * carnet en source de données : il contient volontairement les REFUS, qui
+ * sont la moitié de l'information et n'ont aucun sens pour un utilisateur.
+ *
+ * Un échec d'écriture ne casse rien : l'appelant est déjà sous try/catch, et
+ * on ne veut en aucun cas qu'un carnet d'observation fasse tomber un
+ * passage qui, lui, publie de la météo.
+ */
+async function noterMesuresIles(mesures, contexte) {
+  const chemin = join(SORTIE, CARNET_ILES);
+
+  // Le carnet précédent revient avec `paquets/`, restauré depuis la branche
+  // « site » au début du passage. S'il est absent ou illisible, on repart
+  // d'un carnet vide plutôt que de perdre le passage courant.
+  let carnet = { version: 1, passages: [] };
+  try {
+    const ancien = JSON.parse(await readFile(chemin, 'utf8'));
+    if (Array.isArray(ancien.passages)) carnet = ancien;
+  } catch { /* premier passage, ou fichier abîmé : on recommence */ }
+
+  carnet.passages.push({
+    instant: new Date().toISOString(),
+    ...contexte,
+    iles: mesures.map((m) => (m.refus
+      ? { id: m.id, refus: m.refus,
+          ...(m.dispersion !== undefined ? { dispersion: m.dispersion } : {}),
+          ...(m.desaccord !== undefined ? { desaccord: m.desaccord } : {}),
+          ...(m.eclairement !== undefined ? { eclairement: m.eclairement } : {}) }
+      : { id: m.id, noeuds: m.noeuds, cap: m.cap,
+          dispersion: m.dispersion, desaccord: m.desaccord,
+          fenetreKm: m.fenetreKm }))
+  });
+
+  // On coupe par la fin : les passages récents sont ceux qui décident.
+  if (carnet.passages.length > CARNET_MAX) {
+    carnet.passages = carnet.passages.slice(-CARNET_MAX);
+  }
+
+  await writeFile(chemin, JSON.stringify(carnet), 'utf8');
+  log(`      carnet : ${carnet.passages.length} passage(s) dans paquets/${CARNET_ILES}`);
+  return carnet;
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ * CE QUE L'APPLICATION A LE DROIT DE MONTRER, ÎLE PAR ÎLE.
+ *
+ * C'est ici que la mesure par île devient enfin visible — mais pas parce
+ * qu'on a décidé qu'elle était prête : parce que le carnet le prouve, île
+ * par île et passage par passage. Une île dont le ciel se transforme au
+ * lieu de se déplacer n'apparaît simplement pas dans ce fichier, et
+ * l'application n'a rien à montrer pour elle.
+ *
+ * ⚠️  ON PUBLIE AUSSI LES ÉCARTÉES, AVEC LEUR RAISON. Une île absente sans
+ * explication ressemble à une panne. Une île absente qui dit « le ciel se
+ * transforme au lieu de se déplacer » enseigne quelque chose de vrai à
+ * quelqu'un qui regarde la mer par la fenêtre — et c'est le point 9 du
+ * cahier des charges : ne pas conclure plus fort que ce qu'on sait.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+async function publierProjectionIles(carnet, nomsParId) {
+  const { fabriquerProjectionIles } = await import('./parile.mjs');
+  const contenu = fabriquerProjectionIles(carnet.passages, nomsParId);
+
+  const dossier = join(SORTIE, 'nuages', 'projection');
+  await mkdir(dossier, { recursive: true });
+  await writeFile(join(dossier, 'iles.json'), JSON.stringify(contenu), 'utf8');
+
+  log(`  projection par île : ${contenu.iles.length} publiée(s), `
+    + `${contenu.ecartees.length} écartée(s) → nuages/projection/iles.json`);
+  for (const p of contenu.iles) {
+    log(`      ${p.nom.padEnd(12)} ${String(p.noeuds).padStart(2)} nds `
+      + `vers ${String(p.cap).padStart(3)}° · ${p.confiance.mesures}/${p.confiance.passages} `
+      + `passages, ${p.confiance.etendueCap}° d’écart`);
+  }
+  for (const e of contenu.ecartees) {
+    log(`      ${e.nom.padEnd(12)} écartée : ${e.raison}`);
+  }
+  return contenu;
+}
+
 async function principal() {
   const brutSpots = await readFile(join(ICI, 'spots.json'), 'utf8');
   const registre = JSON.parse(brutSpots);
@@ -793,6 +901,13 @@ async function principal() {
         const bons = m.filter((x) => !x.refus).length;
         log(`  par île : ${bons}/${m.length} île(s) mesurées (journal seulement, rien n’est publié)`);
         for (const ligne of direMesures(m)) log(ligne);
+        const carnet = await noterMesuresIles(m, {
+          canal: 'infrarouge', kmParPixel,
+          largeur: metaIr.width, hauteur: metaIr.height,
+          images: noms.length, cadence: anim.cadence || 10
+        });
+        await publierProjectionIles(carnet,
+          Object.fromEntries(iles.map((i) => [i.id, i.nom])));
       }
     } catch (e) {
       log(`  par île : mesure abandonnée — ${(e && e.message) || e}`);

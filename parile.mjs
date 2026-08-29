@@ -220,6 +220,166 @@ export async function mesurerToutesLesIles(sharp, chemins, iles, geo) {
   return out;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * QUAND A-T-ON LE DROIT DE MONTRER UNE FLÈCHE ?
+ *
+ * Une mesure isolée ne prouve rien. La corrélation rend TOUJOURS un
+ * déplacement — c'est le maximum d'une surface, il existe même dans du
+ * bruit. Les garde-fous de `mesurerUneIle` écartent les cas manifestement
+ * faux, mais un ciel qui se transforme peut passer une fois par accident.
+ *
+ * Ce qu'on ne peut pas simuler et qu'un accident ne reproduit pas, c'est la
+ * PERSISTANCE : un alizé établi donne la même direction, passage après
+ * passage, pendant des heures. Un artefact non.
+ *
+ * La règle ci-dessous ne demande donc pas « la dernière mesure est-elle
+ * bonne » mais « cette île bouge-t-elle dans le même sens depuis deux
+ * heures ». C'est le seul juge qu'on ait qui ne soit pas une opinion — et
+ * c'est lui qui décide de publier, pas un humain qui aurait regardé des
+ * journaux et trouvé que « ça a l'air bon ».
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** Combien de passages récents du carnet on regarde. */
+export const FENETRE_PASSAGES = 6;
+
+/** Combien d'entre eux doivent avoir donné une mesure. */
+export const ACCORDS_MIN = 3;
+
+/**
+ * Écart de cap toléré entre ces mesures, en degrés.
+ *
+ * Un alizé établi tourne de dix à vingt degrés sur deux heures. Quarante-cinq
+ * laisse la marge d'une brise qui vire sans laisser passer deux directions
+ * qui n'ont rien à voir.
+ */
+export const ETENDUE_CAP_MAX = 45;
+
+/** Étendue de vitesse tolérée : la plus grande de 6 nœuds ou de la moitié. */
+function vitesseCoherente(noeuds) {
+  const min = Math.min(...noeuds), max = Math.max(...noeuds);
+  const med = mediane(noeuds);
+  return (max - min) <= Math.max(6, med * 0.5);
+}
+
+/**
+ * Moyenne circulaire d'une liste de caps, et le plus grand écart à cette
+ * moyenne. On passe par les vecteurs : la moyenne arithmétique de 350° et
+ * 10° vaut 180°, ce qui désignerait le sud pour deux mesures qui pointent
+ * toutes deux vers le nord.
+ */
+export function dispersionDesCaps(caps) {
+  let x = 0, y = 0;
+  for (const c of caps) {
+    x += Math.cos(c * Math.PI / 180);
+    y += Math.sin(c * Math.PI / 180);
+  }
+  const moyen = (Math.atan2(y / caps.length, x / caps.length) * 180 / Math.PI + 360) % 360;
+  let etendue = 0;
+  for (const c of caps) {
+    let d = Math.abs(c - moyen) % 360;
+    if (d > 180) d = 360 - d;
+    if (d > etendue) etendue = d;
+  }
+  return { moyen: Math.round(moyen), etendue: Math.round(etendue) };
+}
+
+/**
+ * Les îles dont le carnet autorise une publication, et pourquoi les autres
+ * ne l'autorisent pas.
+ *
+ * ⚠️  LA MESURE LA PLUS RÉCENTE DOIT EN FAIRE PARTIE.
+ *
+ * Sans cette condition, une île qui a bien bougé pendant deux heures puis
+ * s'est mise à refuser continuerait d'afficher sa dernière flèche connue —
+ * une projection d'il y a une heure présentée comme celle de maintenant.
+ * C'est précisément le mensonge que tout le reste du projet passe son temps
+ * à empêcher, et il serait invisible : la flèche aurait l'air normale.
+ *
+ * @param passages  les entrées du carnet, de la plus ancienne à la plus récente
+ */
+export function ilesPubliables(passages) {
+  const recents = (passages || []).slice(-FENETRE_PASSAGES);
+  if (!recents.length) return { publiables: [], ecartes: [], passagesVus: 0 };
+
+  const dernier = recents[recents.length - 1];
+  const ids = new Set();
+  for (const p of recents) for (const i of (p.iles || [])) ids.add(i.id);
+
+  const publiables = [], ecartes = [];
+
+  for (const id of ids) {
+    const vues = recents
+      .map((p) => (p.iles || []).find((i) => i.id === id))
+      .filter((i) => i && !i.refus && typeof i.cap === 'number');
+
+    const dansLeDernier = (dernier.iles || [])
+      .find((i) => i.id === id && !i.refus && typeof i.cap === 'number');
+
+    if (!dansLeDernier) {
+      const r = (dernier.iles || []).find((i) => i.id === id);
+      ecartes.push({ id, raison: 'pas de mesure au dernier passage'
+        + (r && r.refus ? ' — ' + r.refus : '') });
+      continue;
+    }
+    if (vues.length < ACCORDS_MIN) {
+      ecartes.push({ id, raison: `seulement ${vues.length} mesure(s) sur les `
+        + `${recents.length} derniers passages (il en faut ${ACCORDS_MIN})` });
+      continue;
+    }
+
+    const { moyen, etendue } = dispersionDesCaps(vues.map((v) => v.cap));
+    if (etendue > ETENDUE_CAP_MAX) {
+      ecartes.push({ id, raison: `direction instable : ${etendue}° d’écart entre `
+        + `les mesures (limite ${ETENDUE_CAP_MAX}°)` });
+      continue;
+    }
+    const noeuds = vues.map((v) => v.noeuds);
+    if (!vitesseCoherente(noeuds)) {
+      ecartes.push({ id, raison: `vitesse instable : de ${Math.min(...noeuds)} à `
+        + `${Math.max(...noeuds)} nœuds` });
+      continue;
+    }
+
+    publiables.push({
+      id,
+      // On publie la mesure LA PLUS RÉCENTE, pas la moyenne : c'est celle
+      // qui décrit le ciel de maintenant. La moyenne ne sert qu'à établir
+      // que cette mesure-là s'inscrit dans une tendance.
+      noeuds: dernier.iles.find((i) => i.id === id).noeuds,
+      cap: dansLeDernier.cap,
+      confiance: {
+        passages: recents.length, mesures: vues.length,
+        capMoyen: moyen, etendueCap: etendue
+      }
+    });
+  }
+
+  return { publiables, ecartes, passagesVus: recents.length };
+}
+
+/**
+ * Le fichier servi à l'application, tel quel.
+ *
+ * ⚠️  `nature: 'projection'` N'EST PAS DÉCORATIF. L'application refuse tout
+ * fichier qui ne se déclare pas ainsi. Le jour où une erreur de chemin
+ * servirait ici de l'observation, elle serait affichée sous une étiquette
+ * « projection » — ou l'inverse, ce qui est pire. Le point 8 du cahier des
+ * charges interdit les deux, et un champ vérifié des deux côtés est le seul
+ * garde-fou qui survive à une faute de frappe.
+ */
+export function fabriquerProjectionIles(passages, nomsParId = {}, maintenant = new Date()) {
+  const r = ilesPubliables(passages);
+  const nommer = (x) => ({ ...x, nom: nomsParId[x.id] || x.id });
+  return {
+    version: 1,
+    genere: maintenant.toISOString(),
+    nature: 'projection',
+    fenetrePassages: r.passagesVus,
+    iles: r.publiables.map(nommer),
+    ecartees: r.ecartes.map(nommer)
+  };
+}
+
 /** Une ligne de journal par île, lisible d'un coup d'œil. */
 export function direMesures(mesures) {
   return mesures.map((m) => {
