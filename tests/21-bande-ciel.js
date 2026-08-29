@@ -92,7 +92,7 @@ module.exports = function () {
     }
     const o = r.images.filter((x) => x.nature === 'observation');
     for (const x of o) {
-      if (!x.url.includes('/nuages/anim/')) {
+      if (!/\/nuages\/anim(-ir)?\//.test(x.url)) {
         fautes.push('une image observée est servie depuis « ' + x.url + ' »');
       }
       if (x.url.includes('nuages/anim/nuages')) {
@@ -101,6 +101,60 @@ module.exports = function () {
       }
     }
     notes.push('cas normal : 3 observations puis 2 projections, chacune depuis son dossier');
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // ── ⚠️  LA NUIT : LE DOSSIER SE LIT, IL NE SE DEVINE PAS
+  //
+  // Depuis que l'imagerie bascule en infrarouge la nuit, l'index sert deux
+  // dossiers. `construireBande` reconstruisait le chemin à partir du seul
+  // NOM du fichier, en supposant `nuages/anim/` : elle aurait redemandé
+  // l'image visible — celle qui est noire — exactement pour les heures que
+  // la bascule existe pour réparer.
+  //
+  // Rien ne l'aurait signalé. L'image existe, elle se charge, elle est
+  // simplement noire, et l'écran d'accueil (qui lit `im.fichier`) aurait
+  // continué de bien marcher pendant que cette page-là se taisait.
+  // ═════════════════════════════════════════════════════════════════════
+  {
+    const nuit = { images: [
+      { fichier: 'nuages/anim-ir/20262410400.jpg', t: '2026-08-29T04:00:00.000Z', canal: 'infrarouge' },
+      { fichier: 'nuages/anim-ir/20262410410.jpg', t: '2026-08-29T04:10:00.000Z', canal: 'infrarouge' }
+    ] };
+    const r = B(nuit, null, 'https://x/paquets');
+    const mauvaises = r.images.filter((x) => !x.url.includes('/nuages/anim-ir/'));
+    if (mauvaises.length) {
+      fautes.push('LA NUIT, LA BANDE VA CHERCHER LE MAUVAIS DOSSIER : « '
+        + mauvaises[0].url + ' » au lieu de nuages/anim-ir/. C’est l’image '
+        + 'VISIBLE, celle qui est noire — donc le carré noir revient sur cette '
+        + 'page pendant que l’accueil, lui, affiche bien l’infrarouge. Aucune '
+        + 'erreur ne serait remontée : le fichier existe et se charge.');
+    }
+
+    // Le crépuscule : la bande est à cheval, chaque image doit aller dans SON
+    // dossier — pas tout l'un ni tout l'autre.
+    const mixte = { images: [
+      { fichier: 'nuages/anim/20262410300.jpg', t: '2026-08-29T03:00:00.000Z', canal: 'visible' },
+      { fichier: 'nuages/anim-ir/20262410310.jpg', t: '2026-08-29T03:10:00.000Z', canal: 'infrarouge' }
+    ] };
+    const m = B(mixte, null, 'https://x/paquets');
+    if (!m.images[0].url.endsWith('/nuages/anim/20262410300.jpg')
+        || !m.images[1].url.endsWith('/nuages/anim-ir/20262410310.jpg')) {
+      fautes.push('bande du crépuscule mal aiguillée : '
+        + m.images.map((x) => x.url).join(' · '));
+    }
+
+    // Et une entrée ancienne, sans chemin, doit toujours marcher.
+    const vieux = { images: [{ horodatage: '20262410300' }] };
+    const v = B(vieux, null, 'https://x/paquets');
+    if (!v.images.length || !v.images[0].url.endsWith('/nuages/anim/20262410300.jpg')) {
+      fautes.push('une entrée ancienne sans `fichier` ne retombe plus sur '
+        + 'nuages/anim/ : ' + JSON.stringify(v.images));
+    }
+    if (!fautes.length) {
+      notes.push('la nuit → anim-ir, le crépuscule → chaque image dans son '
+        + 'dossier, une entrée ancienne → anim/ comme avant');
+    }
   }
 
   // ═════════════════════════════════════════════════════════════════════
