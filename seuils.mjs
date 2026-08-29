@@ -1,9 +1,13 @@
 /**
  * Mata'i — les seuils qui décident du vert, de l'ambre et du rouge.
  *
- * C'EST LE SEUL FICHIER QUI DÉCIDE. L'application et le backend
- * l'utilisent tous les deux, pour qu'un pêcheur ne puisse jamais voir
+ * C'EST LE FICHIER QUI DÉCIDE. Son jumeau, matai-app/src/seuils.js, prend
+ * la même décision côté téléphone, pour qu'un pêcheur ne puisse jamais voir
  * une couleur différente de celle qui a été calculée.
+ *
+ * ⚠️  Les deux sont tenus ensemble par `tests/31-seuils-jumeaux.js`, qui les
+ * fait tourner sur 16 800 combinaisons et exige le même verdict partout —
+ * et non plus par un commentaire, qui ne se déclenche pas.
  *
  * Les valeurs ci-dessous sont PROVISOIRES. Elles viennent d'une
  * estimation, pas de l'expérience de quelqu'un qui sort en mer.
