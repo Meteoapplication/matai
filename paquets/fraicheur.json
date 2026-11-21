@@ -1,0 +1,47 @@
+{
+ "bora-bora": {
+  "empreinte": "ce9e5c3f6fa0a936",
+  "majReelle": "2026-11-21T20:01:43.318Z",
+  "republications": 1
+ },
+ "tahiti": {
+  "empreinte": "657719465e6a9fbb",
+  "majReelle": "2026-11-21T20:01:44.731Z",
+  "republications": 1
+ },
+ "moorea": {
+  "empreinte": "a82d8aec2ccfc4e9",
+  "majReelle": "2026-11-21T20:01:45.715Z",
+  "republications": 1
+ },
+ "raiatea": {
+  "empreinte": "d4dd3fe6f429bfb7",
+  "majReelle": "2026-11-21T20:01:46.704Z",
+  "republications": 1
+ },
+ "rangiroa": {
+  "empreinte": "5023265a699b7601",
+  "majReelle": "2026-11-21T20:01:48.095Z",
+  "republications": 1
+ },
+ "fakarava": {
+  "empreinte": "23f9c2f207aec22f",
+  "majReelle": "2026-11-21T20:01:49.079Z",
+  "republications": 1
+ },
+ "nuku-hiva": {
+  "empreinte": "01b8e0776ea80163",
+  "majReelle": "2026-11-21T19:41:33.796Z",
+  "republications": 2
+ },
+ "tubuai": {
+  "empreinte": "701ca70120d5716e",
+  "majReelle": "2026-11-21T20:01:50.640Z",
+  "republications": 1
+ },
+ "gambier": {
+  "empreinte": "512894b31e9d8ca7",
+  "majReelle": "2026-11-21T20:01:51.623Z",
+  "republications": 1
+ }
+}
